@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  IoT learning lab - AWS IoT Core -> S3 (raw JSON, partitioned by date) -> Athena.
+  Everything here is pay-per-use (no always-on instances). Delete with teardown_aws.py.
+
+Parameters:
+  GatewayId:
+    Type: String
+    Default: gw01
+    AllowedPattern: '[a-zA-Z0-9_-]+'
+    Description: Gateway ID (also used as MQTT client ID and IoT thing name)
+  TopicPrefix:
+    Type: String
+    Default: lab
+    AllowedPattern: '[a-zA-Z0-9_-]+'
+  RetentionDays:
+    Type: Number
+    Default: 90
+    Description: Days to keep raw data in S3 before automatic deletion
+
+Resources:
+  # ---------------------------------------------------------------- storage
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-lab-data
+            Status: Enabled
+            ExpirationInDays: !Ref RetentionDays
+
+  # ---------------------------------------------------------------- device identity
+  GatewayThing:
+    Type: AWS::IoT::Thing
+    Properties:
+      ThingName: !Ref GatewayId
+
+  GatewayPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: !Sub '${GatewayId}-policy'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Least privilege: connect only with its own client ID ...
+          - Effect: Allow
+            Action: iot:Connect
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${GatewayId}'
+          # ... and publish only under its own topic
+          - Effect: Allow
+            Action: iot:Publish
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/${TopicPrefix}/${GatewayId}/*'
+
+  # ---------------------------------------------------------------- routing (rules engine)
+  RuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: iot.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: put-to-s3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource:
+                  - !Sub '${DataBucket.Arn}/raw/*'
+                  - !Sub '${DataBucket.Arn}/errors/*'
+
+  TelemetryToS3Rule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      TopicRulePayload:
+        Description: Store every telemetry message in S3 as one JSON object
+        AwsIotSqlVersion: '2016-03-23'
+        RuleDisabled: false
+        # received_at_ms = when AWS received it. Compare with ts (when the gateway read it).
+        Sql: !Sub "SELECT *, timestamp() AS received_at_ms FROM '${TopicPrefix}/+/+/telemetry'"
+        Actions:
+          - S3:
+              BucketName: !Ref DataBucket
+              RoleArn: !GetAtt RuleRole.Arn
+              Key: 'raw/dt=${parse_time("yyyy-MM-dd", timestamp())}/${topic(3)}-${timestamp()}-${newuuid()}.json'
+        # If the action fails, the message is saved here instead of being lost (like a dead-letter queue)
+        ErrorAction:
+          S3:
+            BucketName: !Ref DataBucket
+            RoleArn: !GetAtt RuleRole.Arn
+            Key: 'errors/${newuuid()}.json'
+
+  # ---------------------------------------------------------------- query (Athena)
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: iot_lab
+
+  TelemetryTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: telemetry_raw
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: json
+          # Partition projection: Athena works out the dt= folders by itself (no crawler needed)
+          projection.enabled: 'true'
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: 2026-01-01,NOW
+          projection.dt.interval: '1'
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub 's3://${DataBucket}/raw/dt=${!dt}/'
+        PartitionKeys:
+          - {Name: dt, Type: string}
+        StorageDescriptor:
+          Location: !Sub 's3://${DataBucket}/raw/'
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+            Parameters:
+              ignore.malformed.json: 'true'
+          Columns:
+            - {Name: message_id, Type: string}
+            - {Name: gateway_id, Type: string}
+            - {Name: equipment_id, Type: string}
+            - {Name: kind, Type: string}
+            - {Name: ts, Type: string}
+            - {Name: seq, Type: bigint}
+            - {Name: status, Type: string}
+            - {Name: metrics, Type: 'map<string,double>'}
+            - {Name: received_at_ms, Type: bigint}
+
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: iot-lab
+      RecursiveDeleteOption: true
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: true
+        # Stop any single query that would scan more than 1 GB (cost guard)
+        BytesScannedCutoffPerQuery: 1073741824
+        ResultConfiguration:
+          OutputLocation: !Sub 's3://${DataBucket}/athena-results/'
+
+Outputs:
+  BucketName:
+    Value: !Ref DataBucket
+  PolicyName:
+    Value: !Ref GatewayPolicy
+  ThingName:
+    Value: !Ref GatewayThing
+  AthenaWorkGroup:
+    Value: !Ref AthenaWorkGroup
+  RuleName:
+    Value: !Ref TelemetryToS3Rule

@@ -1,0 +1,5 @@
+gateway/certs/
+gateway/gateway_config.json
+gateway/buffer.db
+__pycache__/
+.venv/

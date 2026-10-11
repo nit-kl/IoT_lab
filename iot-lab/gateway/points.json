@@ -1,0 +1,43 @@
+{
+  "_comment": "ポイントリスト(タグ表)。protocol: modbus(省略時)/mc。address: Modbusはレジスタ番号、MCはデバイス名(D100, M0 など)。type: u16=符号なし16bit, s16=符号付き16bit, u32_lw/u32_hw=32bit整数(下位/上位ワード先), f32_lw/f32_hw=32bit浮動小数(下位/上位ワード先), bit=1ビット",
+  "equipment": [
+    {
+      "equipment_id": "AHU-01",
+      "kind": "hvac",
+      "protocol": "modbus",
+      "device_id": 1,
+      "points": [
+        {"name": "run_status", "address": 0, "type": "u16", "scale": 1, "unit": ""},
+        {"name": "mode", "address": 1, "type": "u16", "scale": 1, "unit": ""},
+        {"name": "setpoint_c", "address": 2, "type": "u16", "scale": 0.1, "unit": "degC"},
+        {"name": "room_temp_c", "address": 3, "type": "s16", "scale": 0.1, "unit": "degC"},
+        {"name": "humidity_pct", "address": 4, "type": "u16", "scale": 0.1, "unit": "%"},
+        {"name": "alarm_code", "address": 5, "type": "u16", "scale": 1, "unit": ""}
+      ]
+    },
+    {
+      "equipment_id": "PLC-LINE1",
+      "kind": "plc",
+      "protocol": "modbus",
+      "device_id": 2,
+      "points": [
+        {"name": "production_count", "address": 100, "type": "u32_lw", "scale": 1, "unit": "pcs"},
+        {"name": "motor_current_a", "address": 102, "type": "f32_hw", "scale": 1, "unit": "A"},
+        {"name": "line_running", "address": 104, "type": "u16", "scale": 1, "unit": ""}
+      ]
+    },
+    {
+      "equipment_id": "PLC-IQR1",
+      "kind": "plc",
+      "protocol": "mc",
+      "points": [
+        {"name": "production_count", "address": "D100", "type": "u32_lw", "scale": 1, "unit": "pcs"},
+        {"name": "conveyor_speed_mpm", "address": "D102", "type": "u16", "scale": 0.1, "unit": "m/min"},
+        {"name": "motor_current_a", "address": "D104", "type": "f32_lw", "scale": 1, "unit": "A"},
+        {"name": "alarm_code", "address": "D110", "type": "u16", "scale": 1, "unit": ""},
+        {"name": "line_running", "address": "M0", "type": "bit", "scale": 1, "unit": ""},
+        {"name": "alarm_active", "address": "M1", "type": "bit", "scale": 1, "unit": ""}
+      ]
+    }
+  ]
+}
