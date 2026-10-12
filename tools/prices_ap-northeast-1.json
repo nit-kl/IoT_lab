@@ -1,0 +1,34 @@
+{
+  "fetched": "2026-10-12",
+  "region": "ap-northeast-1",
+  "published": {
+    "AWSEvents": "2026-09-24T16:39:03Z",
+    "AWSGlue": "2026-10-06T19:23:38Z",
+    "AWSIoT": "2026-10-03T05:31:20Z",
+    "AWSLambda": "2026-10-09T22:31:22Z",
+    "AmazonAthena": "2026-09-11T12:44:08Z",
+    "AmazonCloudWatch": "2026-10-07T11:55:40Z",
+    "AmazonDynamoDB": "2026-09-11T12:44:22Z",
+    "AmazonS3": "2026-09-28T23:04:16Z",
+    "AmazonSNS": "2026-09-15T15:19:44Z"
+  },
+  "unit": {
+    "athena_scanned_tb": 5.0,
+    "ddb_read_request_unit": 1.425e-07,
+    "ddb_write_request_unit": 7.15e-07,
+    "glue_catalog_request": 1e-06,
+    "iot_action_executed": 1.8e-07,
+    "iot_connection_minute": 9.6e-08,
+    "iot_message": 1.2e-06,
+    "iot_rule_triggered": 1.8e-07,
+    "lambda_gb_second": 1.66667e-05,
+    "lambda_request": 2e-07,
+    "logs_ingest_gb": 0.76,
+    "s3_get_request": 3.7e-07,
+    "s3_put_request": 4.7e-06,
+    "s3_storage_gb_month": 0.025,
+    "scheduler_invocation": 1.25e-06,
+    "sns_email": 2e-05,
+    "sns_request": 5e-07
+  }
+}

@@ -56,6 +56,14 @@ Resources:
           - Effect: Allow
             Action: iot:Publish
             Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/${TopicPrefix}/${GatewayId}/*'
+          # Remote control: subscribe to exactly its own command filter ('+' is matched literally here) ...
+          - Effect: Allow
+            Action: iot:Subscribe
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/${TopicPrefix}/${GatewayId}/+/cmd'
+          # ... and receive commands addressed to its own equipment only
+          - Effect: Allow
+            Action: iot:Receive
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/${TopicPrefix}/${GatewayId}/*/cmd'
 
   # ---------------------------------------------------------------- routing (rules engine)
   RuleRole:
@@ -226,6 +234,9 @@ Resources:
         - {AttributeName: equipment_id, AttributeType: S}
       KeySchema:
         - {AttributeName: equipment_id, KeyType: HASH}
+      # Every change to an item is also published as a stream record (with before/after images)
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
 
   LatestValueLogGroup:
     Type: AWS::Logs::LogGroup
@@ -273,7 +284,7 @@ Resources:
       Code:
         # setup_aws.py replaces the line below with the contents of aws/lambda/latest_value.py
         ZipFile: |
-          # __LATEST_VALUE_CODE__
+          # __CODE:latest_value__
 
   # A second rule on the same topic: one message fans out to S3 (history) and Lambda (latest)
   LatestValueRule:
@@ -303,6 +314,181 @@ Resources:
       SourceArn: !GetAtt LatestValueRule.Arn
       SourceAccount: !Ref AWS::AccountId
 
+  # ---------------------------------------------------------------- alarm notification (Streams + schedule -> Lambda -> SNS)
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: iot-lab alarm
+
+  # One item per alarm that has been notified and not yet recovered
+  AlarmStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: pk, AttributeType: S}
+      KeySchema:
+        - {AttributeName: pk, KeyType: HASH}
+
+  AlarmNotifierLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+
+  AlarmNotifierRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: notify-alarms
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource: !GetAtt LatestTable.StreamArn
+              - Effect: Allow
+                Action: dynamodb:Scan
+                Resource: !GetAtt LatestTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Scan
+                Resource: !GetAtt AlarmStateTable.Arn
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref AlarmTopic
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt AlarmNotifierLogGroup.Arn
+
+  AlarmNotifierFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.13
+      Handler: index.handler
+      Role: !GetAtt AlarmNotifierRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      LoggingConfig:
+        LogGroup: !Ref AlarmNotifierLogGroup
+      Environment:
+        Variables:
+          LATEST_TABLE: !Ref LatestTable
+          STATE_TABLE: !Ref AlarmStateTable
+          TOPIC_ARN: !Ref AlarmTopic
+          STALE_SEC: '120'
+      Code:
+        # setup_aws.py replaces the line below with the contents of aws/lambda/alarm_notifier.py
+        ZipFile: |
+          # __CODE:alarm_notifier__
+
+  AlarmStreamMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      FunctionName: !Ref AlarmNotifierFunction
+      EventSourceArn: !GetAtt LatestTable.StreamArn
+      StartingPosition: LATEST
+      BatchSize: 10
+      # The default (-1) retries a failing batch until the record expires (24h) and blocks
+      # everything behind it. Give up after a few tries instead.
+      MaximumRetryAttempts: 3
+
+  # "No data arriving" causes no write, so no stream record. Check timestamps every minute instead.
+  StaleCheckSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      ScheduleExpression: rate(1 minute)
+      FlexibleTimeWindow: {Mode: 'OFF'}
+      State: ENABLED
+      Target:
+        Arn: !GetAtt AlarmNotifierFunction.Arn
+        RoleArn: !GetAtt StaleCheckSchedulerRole.Arn
+        Input: '{"source": "stale-check"}'
+
+  StaleCheckSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: scheduler.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: invoke-alarm-notifier
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt AlarmNotifierFunction.Arn
+
+  # ---------------------------------------------------------------- remote control (command log)
+  # One item per command: send_command.py writes it as "sent", the gateway's result overwrites it.
+  CommandTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: command_id, AttributeType: S}
+      KeySchema:
+        - {AttributeName: command_id, KeyType: HASH}
+
+  CommandRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: iot.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: put-command-result
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt CommandTable.Arn
+
+  # Each command_id is unique, so a plain overwrite is safe here (unlike the latest-value table,
+  # no Lambda / condition is needed: the DynamoDBv2 action writes the JSON as-is)
+  CommandResultRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      TopicRulePayload:
+        Description: Record command results (audit log)
+        AwsIotSqlVersion: '2016-03-23'
+        RuleDisabled: false
+        Sql: !Sub "SELECT *, timestamp() AS received_at_ms FROM '${TopicPrefix}/+/+/cmd_result'"
+        Actions:
+          - DynamoDBv2:
+              RoleArn: !GetAtt CommandRuleRole.Arn
+              PutItem:
+                TableName: !Ref CommandTable
+        ErrorAction:
+          S3:
+            BucketName: !Ref DataBucket
+            RoleArn: !GetAtt RuleRole.Arn
+            Key: 'errors/cmd-${newuuid()}.json'
+
 Outputs:
   BucketName:
     Value: !Ref DataBucket
@@ -322,3 +508,13 @@ Outputs:
     Value: !Ref LatestValueFunction
   LatestValueLogGroup:
     Value: !Ref LatestValueLogGroup
+  AlarmTopicArn:
+    Value: !Ref AlarmTopic
+  AlarmStateTableName:
+    Value: !Ref AlarmStateTable
+  AlarmNotifierLogGroup:
+    Value: !Ref AlarmNotifierLogGroup
+  StaleCheckScheduleName:
+    Value: !Ref StaleCheckSchedule
+  CommandTableName:
+    Value: !Ref CommandTable

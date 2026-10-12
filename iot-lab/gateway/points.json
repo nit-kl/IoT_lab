@@ -1,5 +1,5 @@
 {
-  "_comment": "ポイントリスト(タグ表)。protocol: modbus(省略時)/mc。address: Modbusはレジスタ番号、MCはデバイス名(D100, M0 など)。type: u16=符号なし16bit, s16=符号付き16bit, u32_lw/u32_hw=32bit整数(下位/上位ワード先), f32_lw/f32_hw=32bit浮動小数(下位/上位ワード先), bit=1ビット",
+  "_comment": "ポイントリスト(タグ表)。protocol: modbus(省略時)/mc。address: Modbusはレジスタ番号、MCはデバイス名(D100, M0 など)。type: u16=符号なし16bit, s16=符号付き16bit, u32_lw/u32_hw=32bit整数(下位/上位ワード先), f32_lw/f32_hw=32bit浮動小数(下位/上位ワード先), bit=1ビット。writable: 遠隔操作で書き込んでよいポイントと、その値の範囲(書いていないポイントは読み取り専用)",
   "equipment": [
     {
       "equipment_id": "AHU-01",
@@ -9,7 +9,7 @@
       "points": [
         {"name": "run_status", "address": 0, "type": "u16", "scale": 1, "unit": ""},
         {"name": "mode", "address": 1, "type": "u16", "scale": 1, "unit": ""},
-        {"name": "setpoint_c", "address": 2, "type": "u16", "scale": 0.1, "unit": "degC"},
+        {"name": "setpoint_c", "address": 2, "type": "u16", "scale": 0.1, "unit": "degC", "writable": {"min": 18.0, "max": 30.0}},
         {"name": "room_temp_c", "address": 3, "type": "s16", "scale": 0.1, "unit": "degC"},
         {"name": "humidity_pct", "address": 4, "type": "u16", "scale": 0.1, "unit": "%"},
         {"name": "alarm_code", "address": 5, "type": "u16", "scale": 1, "unit": ""}

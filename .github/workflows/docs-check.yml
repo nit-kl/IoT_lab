@@ -1,0 +1,16 @@
+# docs/アーキテクチャとコスト.md が実装(template.yaml・手順書・コストモデル)とずれていないかを検査する
+name: docs-check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  architecture-and-cost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/docs_sync.py --check

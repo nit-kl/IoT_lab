@@ -6,14 +6,17 @@ AWS 側の環境を作るスクリプト(Windows / Mac / Linux 共通)
   3. AWS IoT Core のエンドポイントを調べ、gateway/gateway_config.json を自動作成
   4. Grafana用の最小権限アクセスキーを発行し、grafana/.env を自動作成
 
-Lambda のコードは aws/lambda/latest_value.py が正本です。テンプレートに埋め込んでデプロイするので、
-コードを書き換えたらこのスクリプトを再実行すれば反映されます。
+  (--email を付けると、アラーム通知メールの購読も登録)
+
+Lambda のコードは aws/lambda/*.py が正本です。template.yaml の「# __CODE:ファイル名__」の行に
+埋め込んでデプロイするので、コードを書き換えたらこのスクリプトを再実行すれば反映されます。
 
 前提: AWS CLI で認証情報を設定済み(aws configure または aws sso login)
-実行: python aws/setup_aws.py [--region ap-northeast-1] [--profile 名前]
+実行: python aws/setup_aws.py [--email you@example.com] [--region ap-northeast-1] [--profile 名前]
 """
 import argparse
 import json
+import re
 import urllib.request
 from pathlib import Path
 
@@ -25,17 +28,21 @@ CERT_DIR = GATEWAY_DIR / "certs"
 GRAFANA_DIR = ROOT / "grafana"
 STACK_NAME = "iot-lab"
 ROOT_CA_URL = "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
-CODE_MARKER = "          # __LATEST_VALUE_CODE__"
+CODE_MARKER = re.compile(r"^( *)# __CODE:(\w+)__$", re.MULTILINE)
 ZIPFILE_LIMIT = 4096  # CloudFormation のインラインコード(ZipFile)の上限文字数
+
+
+def embed_code(m: re.Match) -> str:
+    indent, name = m.group(1), m.group(2)
+    code = (ROOT / "aws" / "lambda" / f"{name}.py").read_text(encoding="utf-8")
+    if len(code) > ZIPFILE_LIMIT:
+        raise SystemExit(f"aws/lambda/{name}.py が {len(code)} 文字あり、上限 {ZIPFILE_LIMIT} 文字を超えています")
+    return "\n".join(indent + line if line else "" for line in code.splitlines())
 
 
 def build_template() -> str:
     body = (ROOT / "aws" / "template.yaml").read_text(encoding="utf-8")
-    code = (ROOT / "aws" / "lambda" / "latest_value.py").read_text(encoding="utf-8")
-    if len(code) > ZIPFILE_LIMIT:
-        raise SystemExit(f"aws/lambda/latest_value.py が {len(code)} 文字あり、上限 {ZIPFILE_LIMIT} 文字を超えています")
-    indent = " " * (len(CODE_MARKER) - len(CODE_MARKER.lstrip()))
-    return body.replace(CODE_MARKER, "\n".join(indent + line if line else "" for line in code.splitlines()))
+    return CODE_MARKER.sub(embed_code, body)
 
 
 def deploy_stack(cfn, gateway_id: str) -> dict:
@@ -109,11 +116,21 @@ def write_grafana_env(iam, region: str, grafana_user: str) -> None:
     print("      秘密鍵と同様に扱ってください。grafana/.env を他人に渡さないでください")
 
 
+def subscribe_email(sns, topic_arn: str, email: str) -> None:
+    subs = sns.list_subscriptions_by_topic(TopicArn=topic_arn)["Subscriptions"]
+    if any(s["Endpoint"] == email for s in subs):
+        print(f"      通知先 {email} は登録済みです")
+        return
+    sns.subscribe(TopicArn=topic_arn, Protocol="email", Endpoint=email)
+    print(f"      通知先 {email} を登録しました。届いた確認メールの「Confirm subscription」を押してください")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--region", default="ap-northeast-1")
     ap.add_argument("--profile", default=None)
     ap.add_argument("--gateway-id", default="gw01")
+    ap.add_argument("--email", default=None, help="アラーム通知を受け取るメールアドレス(ハンズオン4)")
     args = ap.parse_args()
 
     session = boto3.Session(profile_name=args.profile, region_name=args.region)
@@ -125,11 +142,14 @@ def main() -> None:
     issue_certificate(iot, f"{args.gateway_id}-policy", args.gateway_id)
     write_gateway_config(iot, args.gateway_id)
     write_grafana_env(session.client("iam"), args.region, outputs["GrafanaUserName"])
+    if args.email:
+        subscribe_email(session.client("sns"), outputs["AlarmTopicArn"], args.email)
 
     print("\n完了。次は: python gateway/gateway.py")
     print(f"データ保存先: s3://{outputs.get('BucketName')}/raw/   Athenaワークグループ: iot-lab")
     print(f"最新値テーブル: {outputs.get('LatestTableName')}   確認: python aws/show_latest.py")
     print(f"Lambdaのログ: aws logs tail {outputs.get('LatestValueLogGroup')} --follow")
+    print(f"通知Lambdaのログ: aws logs tail {outputs.get('AlarmNotifierLogGroup')} --follow")
     print("Grafanaで見る場合: cd grafana && docker compose up -d → http://localhost:3000")
 
 

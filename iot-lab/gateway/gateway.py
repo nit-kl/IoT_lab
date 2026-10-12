@@ -5,6 +5,7 @@
   → ポイントリスト(points.json)に従って生値を工学値に変換
   → JSON にして SQLite のバッファに積む(ストア&フォワード)
   → MQTT(AWS IoT Core なら TLS + X.509 証明書)で送信し、届いたらバッファから消す
+  ← クラウドからの命令(…/cmd)を受け取り、安全確認をしてから機器に書き込み、結果(…/cmd_result)を返す
 
 実行例:
   python gateway.py --console                 # 送信せず画面表示だけ(ステップ1)
@@ -14,6 +15,7 @@
 import argparse
 import json
 import logging
+import queue
 import sqlite3
 import struct
 import time
@@ -48,6 +50,15 @@ def decode(regs: list[int], dtype: str) -> float:
     raise ValueError(f"未対応の型: {dtype}")
 
 
+def encode(raw: int, dtype: str) -> list[int]:
+    """decode の逆。書き込みは1ワードの型だけに絞る(2ワードの書き込みは途中で値が混ざる事故が起きやすい)"""
+    if dtype == "u16" and 0 <= raw <= 0xFFFF:
+        return [raw]
+    if dtype == "s16" and -0x8000 <= raw <= 0x7FFF:
+        return [raw & 0xFFFF]
+    raise ValueError(f"{dtype} に書き込めない値です: {raw}")
+
+
 class ModbusReader:
     """Modbus TCP で読む(空調機・汎用機器)"""
 
@@ -64,6 +75,13 @@ class ModbusReader:
 
     def read_bit(self, eq: dict, p: dict) -> int:
         raise ValueError("このキットのModbus読み取りはワード(保持レジスタ)のみ対応")
+
+    def write_word(self, eq: dict, p: dict, raw: int) -> None:
+        if not self.client.connected:
+            self.client.connect()
+        rr = self.client.write_register(p["address"], raw, device_id=eq["device_id"])   # ファンクションコード06
+        if rr.isError():
+            raise IOError(f"{eq['equipment_id']} {p['name']} 書き込み失敗: {rr}")
 
     def reset(self) -> None:
         self.client.close()
@@ -94,6 +112,9 @@ class McReader:
         self._ensure()
         return self.client.batchread_bitunits(p["address"], 1)[0]
 
+    def write_word(self, eq: dict, p: dict, raw: int) -> None:
+        raise ValueError("このキットの書き込みはModbusのみ対応")
+
     def reset(self) -> None:
         try:
             self.client.close()
@@ -102,22 +123,22 @@ class McReader:
         self.connected = False
 
 
+def read_point(reader, eq: dict, p: dict, dump_raw: bool = False) -> float:
+    if p["type"] == "bit":
+        value = reader.read_bit(eq, p)
+        raw = str(value)
+    else:
+        raw_vals = reader.read_words(eq, p, REG_COUNT[p["type"]])
+        value = round(decode(raw_vals, p["type"]) * p.get("scale", 1), 3)
+        raw = " ".join(f"0x{r:04X}" for r in raw_vals)
+    if dump_raw:
+        print(f"  [raw] {eq['equipment_id']:<10} {str(p['address']):<6} {raw:<14} -> {p['name']}={value}")
+    return value
+
+
 def read_equipment(reader, eq: dict, dump_raw: bool) -> dict:
     """1台分のポイントを読み、{名前: 値} を返す。通信エラー時は例外"""
-    metrics = {}
-    for p in eq["points"]:
-        if p["type"] == "bit":
-            raw_vals = [reader.read_bit(eq, p)]
-            value = raw_vals[0]
-            raw = str(value)
-        else:
-            raw_vals = reader.read_words(eq, p, REG_COUNT[p["type"]])
-            value = decode(raw_vals, p["type"]) * p.get("scale", 1)
-            raw = " ".join(f"0x{r:04X}" for r in raw_vals)
-        metrics[p["name"]] = round(value, 3)
-        if dump_raw:
-            print(f"  [raw] {eq['equipment_id']:<10} {str(p['address']):<6} {raw:<14} -> {p['name']}={metrics[p['name']]}")
-    return metrics
+    return {p["name"]: read_point(reader, eq, p, dump_raw) for p in eq["points"]}
 
 
 # --------------------------------------------------------------------------
@@ -152,12 +173,82 @@ class Buffer:
 
 
 # --------------------------------------------------------------------------
-# 3. MQTT 送信
+# 3. 遠隔操作(クラウド → 機器への書き込み)。読むより事故の影響が大きいので確認を重ねる
 # --------------------------------------------------------------------------
-def make_mqtt_client(cfg: dict):
+class Rejected(Exception):
+    """安全確認で断った命令(機器には何もしていない)"""
+
+
+class CommandLog:
+    """実行済みの命令を覚えておく。QoS1 では同じ命令が2回届くことがあるため"""
+
+    def __init__(self, db: sqlite3.Connection):
+        self.db = db
+        self.db.execute("CREATE TABLE IF NOT EXISTS commands (command_id TEXT PRIMARY KEY, result TEXT)")
+        self.db.commit()
+
+    def get(self, command_id: str):
+        row = self.db.execute("SELECT result FROM commands WHERE command_id = ?", (command_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save(self, command_id: str, result: dict) -> None:
+        self.db.execute("INSERT INTO commands VALUES (?, ?)", (command_id, json.dumps(result, ensure_ascii=False)))
+        self.db.commit()
+
+
+def write_point(cmd: dict, equipment: dict, readers: dict) -> dict:
+    # 1. 期限切れの命令は実行しない(回線の遅れで数分後に届いた「設定温度を下げろ」は、もう誰も望んでいないかもしれない)
+    if datetime.fromisoformat(cmd["expires_at"].replace("Z", "+00:00")) < datetime.now(timezone.utc):
+        raise Rejected("期限切れ")
+    # 2. ポイントリストで writable と書かれたポイントだけ書ける(それ以外は読み取り専用)
+    eq = equipment.get(cmd["equipment_id"])
+    p = next((p for p in eq["points"] if p["name"] == cmd["point"]), None) if eq else None
+    if p is None:
+        raise Rejected(f"未登録のポイント: {cmd['equipment_id']} {cmd['point']}")
+    limits = p.get("writable")
+    if not limits:
+        raise Rejected(f"書き込み禁止のポイント: {p['name']}")
+    # 3. 範囲外の値は書かない(打ち間違いの 2.5 や 250 で機器を壊さない)
+    value = float(cmd["value"])
+    if not limits["min"] <= value <= limits["max"]:
+        raise Rejected(f"範囲外の値: {value}(許可 {limits['min']}〜{limits['max']})")
+    # 4. 書く前の値を読み、書いて、読み返して確かめる
+    reader = readers[eq.get("protocol", "modbus")]
+    before = read_point(reader, eq, p)
+    scale = p.get("scale", 1)
+    reader.write_word(eq, p, encode(round(value / scale), p["type"])[0])
+    after = read_point(reader, eq, p)
+    if abs(after - value) > scale / 2:
+        return {"status": "failed", "reason": f"読み返した値が違う: {after}", "before": before, "after": after}
+    return {"status": "done", "before": before, "after": after}
+
+
+def execute_command(cmd: dict, equipment: dict, readers: dict, done: CommandLog) -> dict:
+    prev = done.get(cmd["command_id"])
+    if prev:   # 2回目以降は実行せず、前回の結果を返す(冪等性)
+        return {**prev, "duplicate": True}
+    result = {**cmd, "executed_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")}
+    try:
+        result.update(write_point(cmd, equipment, readers))
+    except Rejected as e:
+        result.update(status="rejected", reason=str(e))
+    except (KeyError, TypeError, ValueError, AttributeError) as e:   # 項目の不足・値の型違いなど(機器には書いていない)
+        result.update(status="rejected", reason=f"命令の形式が不正: {e!r}")
+    except Exception as e:   # 通信エラーなど
+        readers[equipment[cmd["equipment_id"]].get("protocol", "modbus")].reset()
+        result.update(status="failed", reason=str(e))
+    done.save(cmd["command_id"], result)
+    return result
+
+
+# --------------------------------------------------------------------------
+# 4. MQTT 送受信
+# --------------------------------------------------------------------------
+def make_mqtt_client(cfg: dict, commands: queue.Queue):
     import paho.mqtt.client as mqtt
 
     m = cfg["mqtt"]
+    cmd_filter = f"{m.get('topic_prefix', 'lab')}/{cfg['gateway_id']}/+/cmd"
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
         client_id=m["client_id"],
@@ -170,7 +261,22 @@ def make_mqtt_client(cfg: dict):
             certfile=str(BASE_DIR / tls["cert"]),
             keyfile=str(BASE_DIR / tls["key"]),
         )
-    client.on_connect = lambda c, u, f, rc, p: log.info("MQTT接続: %s", rc)
+    def on_connect(c, u, f, rc, p):
+        log.info("MQTT接続: %s", rc)
+        # 購読は接続のたびにやり直す(再接続後に購読し忘れて命令が届かなくなる、はよくある不具合)
+        c.subscribe(cmd_filter, qos=1)
+
+    def on_message(c, u, msg):
+        # MQTTの受信スレッドでは機器に触らず、キューに積んでメインループで実行する
+        try:
+            cmd = json.loads(msg.payload)
+            cmd["equipment_id"] = msg.topic.split("/")[2]   # 宛先はトピックで決める
+            commands.put(cmd)
+        except (ValueError, AttributeError, TypeError):
+            log.warning("命令を読めません: %s %r", msg.topic, msg.payload[:200])
+
+    client.on_connect = on_connect
+    client.on_message = on_message
     client.on_disconnect = lambda c, u, f, rc, p: log.warning("MQTT切断: %s(自動で再接続します)", rc)
     client.reconnect_delay_set(min_delay=1, max_delay=60)   # 指数バックオフ
     client.connect_async(m["host"], m.get("port", 8883), keepalive=60)
@@ -228,8 +334,11 @@ def main() -> None:
             if proto not in cfg:
                 raise SystemExit(f"設定ファイルに {proto} の接続先がありません({eq['equipment_id']})")
             readers[proto] = ModbusReader(cfg[proto]) if proto == "modbus" else McReader(cfg[proto])
+    equipment = {eq["equipment_id"]: eq for eq in points["equipment"]}
     buf = Buffer(BASE_DIR / "buffer.db")
-    client = None if args.console else make_mqtt_client(cfg)
+    done = CommandLog(buf.db)
+    commands: queue.Queue = queue.Queue()
+    client = None if args.console else make_mqtt_client(cfg, commands)
     seq = int(time.time())  # 再起動しても増え続ける連番(重複・欠損チェック用)
 
     log.info("開始: gateway=%s 機器=%d台 周期=%ss モード=%s",
@@ -269,7 +378,21 @@ def main() -> None:
 
         if args.once:
             break
-        time.sleep(max(0, interval - (time.time() - cycle_start)))
+        # 次の周期まで、届いた命令を処理しながら待つ
+        while (remaining := cycle_start + interval - time.time()) > 0:
+            try:
+                cmd = commands.get(timeout=remaining)
+            except queue.Empty:
+                break
+            if not isinstance(cmd.get("command_id"), str) or cmd["equipment_id"] not in equipment:
+                log.warning("命令を無視しました(command_id が無い、または未登録の機器): %s", cmd)
+                continue
+            result = execute_command(cmd, equipment, readers, done)
+            log.info("命令 %s %s %s=%s → %s %s", cmd["command_id"][:8], cmd["equipment_id"], cmd.get("point"),
+                     cmd.get("value"), result["status"],
+                     "(重複のため再実行せず)" if result.get("duplicate") else result.get("reason", ""))
+            buf.put(f"{prefix}/{gw_id}/{cmd['equipment_id']}/cmd_result", result)   # 結果もバッファ経由で確実に返す
+            flush(client, buf)
 
     if client:
         time.sleep(2)

@@ -64,7 +64,7 @@ IoTでは、メッセージが「読んだ順」に届くとは限りません�
    Lambdaのログ: aws logs tail iot-lab-LatestValueLogGroup-XXXXXXXX --follow
    ```
 
-2. Lambdaのコードは `aws/lambda/latest_value.py` が元になっています。`setup_aws.py` がこのファイルの中身を `template.yaml` の `# __LATEST_VALUE_CODE__` の行に埋め込んでからデプロイします。コードを書き換えたときは、`setup_aws.py` を再実行すれば反映されます(CloudFormationのインラインコードは4096文字までなので、それを超えると止まるようにしてあります)。
+2. Lambdaのコードは `aws/lambda/latest_value.py` が元になっています。`setup_aws.py` がこのファイルの中身を `template.yaml` の `# __CODE:latest_value__` の行に埋め込んでからデプロイします。コードを書き換えたときは、`setup_aws.py` を再実行すれば反映されます(CloudFormationのインラインコードは4096文字までなので、それを超えると止まるようにしてあります)。
 
 ## ステップ2:最新値を見る
 
@@ -156,7 +156,7 @@ python aws/teardown_aws.py
 
 ## 次のステップ
 
-- [ ] 最新値テーブルの変化(DynamoDB Streams)で、アラームコードが0以外になったらSNSでメール通知する
+- [x] 最新値テーブルの変化(DynamoDB Streams)で、アラームコードが0以外になったらSNSでメール通知する → [IoT学習ハンズオン4](./IoT学習ハンズオン4%20アラーム通知.md)
 - [ ] BACnetシミュレータを追加し、空調機をBACnet/IPで読む
 - [ ] OPC UAのサンプルサーバーを立て、PLC役をOPC UAに置き換える
 - [ ] ゲートウェイをAWS IoT Greengrassのコンポーネントにする
