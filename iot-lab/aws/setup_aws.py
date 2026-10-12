@@ -6,6 +6,9 @@ AWS 側の環境を作るスクリプト(Windows / Mac / Linux 共通)
   3. AWS IoT Core のエンドポイントを調べ、gateway/gateway_config.json を自動作成
   4. Grafana用の最小権限アクセスキーを発行し、grafana/.env を自動作成
 
+Lambda のコードは aws/lambda/latest_value.py が正本です。テンプレートに埋め込んでデプロイするので、
+コードを書き換えたらこのスクリプトを再実行すれば反映されます。
+
 前提: AWS CLI で認証情報を設定済み(aws configure または aws sso login)
 実行: python aws/setup_aws.py [--region ap-northeast-1] [--profile 名前]
 """
@@ -22,10 +25,21 @@ CERT_DIR = GATEWAY_DIR / "certs"
 GRAFANA_DIR = ROOT / "grafana"
 STACK_NAME = "iot-lab"
 ROOT_CA_URL = "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
+CODE_MARKER = "          # __LATEST_VALUE_CODE__"
+ZIPFILE_LIMIT = 4096  # CloudFormation のインラインコード(ZipFile)の上限文字数
+
+
+def build_template() -> str:
+    body = (ROOT / "aws" / "template.yaml").read_text(encoding="utf-8")
+    code = (ROOT / "aws" / "lambda" / "latest_value.py").read_text(encoding="utf-8")
+    if len(code) > ZIPFILE_LIMIT:
+        raise SystemExit(f"aws/lambda/latest_value.py が {len(code)} 文字あり、上限 {ZIPFILE_LIMIT} 文字を超えています")
+    indent = " " * (len(CODE_MARKER) - len(CODE_MARKER.lstrip()))
+    return body.replace(CODE_MARKER, "\n".join(indent + line if line else "" for line in code.splitlines()))
 
 
 def deploy_stack(cfn, gateway_id: str) -> dict:
-    body = (ROOT / "aws" / "template.yaml").read_text(encoding="utf-8")
+    body = build_template()
     params = [{"ParameterKey": "GatewayId", "ParameterValue": gateway_id}]
     try:
         cfn.describe_stacks(StackName=STACK_NAME)
@@ -34,12 +48,12 @@ def deploy_stack(cfn, gateway_id: str) -> dict:
         exists = False
 
     if not exists:
-        print(f"[1/3] スタック {STACK_NAME} を作成中…(1〜3分)")
+        print(f"[1/4] スタック {STACK_NAME} を作成中…(1〜3分)")
         cfn.create_stack(StackName=STACK_NAME, TemplateBody=body, Parameters=params,
                          Capabilities=["CAPABILITY_IAM"])
         cfn.get_waiter("stack_create_complete").wait(StackName=STACK_NAME)
     else:
-        print(f"[1/3] スタック {STACK_NAME} は作成済み。変更があれば更新します")
+        print(f"[1/4] スタック {STACK_NAME} は作成済み。変更があれば更新します")
         try:
             cfn.update_stack(StackName=STACK_NAME, TemplateBody=body, Parameters=params,
                              Capabilities=["CAPABILITY_IAM"])
@@ -54,9 +68,9 @@ def deploy_stack(cfn, gateway_id: str) -> dict:
 def issue_certificate(iot, policy_name: str, thing_name: str) -> None:
     CERT_DIR.mkdir(parents=True, exist_ok=True)
     if (CERT_DIR / "cert_id.txt").exists():
-        print("[2/3] 証明書は発行済みのため再利用します")
+        print("[2/4] 証明書は発行済みのため再利用します")
         return
-    print("[2/3] デバイス証明書を発行中…")
+    print("[2/4] デバイス証明書を発行中…")
     res = iot.create_keys_and_certificate(setAsActive=True)
     (CERT_DIR / "device.pem.crt").write_text(res["certificatePem"])
     (CERT_DIR / "private.pem.key").write_text(res["keyPair"]["PrivateKey"])
@@ -114,6 +128,8 @@ def main() -> None:
 
     print("\n完了。次は: python gateway/gateway.py")
     print(f"データ保存先: s3://{outputs.get('BucketName')}/raw/   Athenaワークグループ: iot-lab")
+    print(f"最新値テーブル: {outputs.get('LatestTableName')}   確認: python aws/show_latest.py")
+    print(f"Lambdaのログ: aws logs tail {outputs.get('LatestValueLogGroup')} --follow")
     print("Grafanaで見る場合: cd grafana && docker compose up -d → http://localhost:3000")
 
 

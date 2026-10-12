@@ -100,5 +100,5 @@ docker compose down -v
 
 - [ ] BACnetシミュレータを追加し、空調機をBACnet/IPで読む
 - [ ] OPC UAのサンプルサーバーを立て、PLC役をOPC UAに置き換える
-- [ ] IoTルールにLambdaを追加し、機器ごとの最新値をDynamoDBに保存する
+- [x] IoTルールにLambdaを追加し、機器ごとの最新値をDynamoDBに保存する → [IoT学習ハンズオン3](./IoT学習ハンズオン3%20Lambda%2BDynamoDB最新値.md)
 - [ ] ゲートウェイをAWS IoT Greengrassのコンポーネントにする
