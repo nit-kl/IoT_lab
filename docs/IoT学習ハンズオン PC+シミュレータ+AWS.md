@@ -194,7 +194,7 @@ python aws/teardown_aws.py
 
 ### 次のステップ
 
-- [ ] Grafana(ローカルのDocker)とAthenaをつないでグラフ化する
+- [x] Grafana(ローカルのDocker)とAthenaをつないでグラフ化する → [IoT学習ハンズオン2 Grafana可視化](./IoT学習ハンズオン2%20Grafana可視化.md)
 - [ ] BACnetシミュレータを追加し、空調機をBACnet/IPで読む
 - [ ] OPC UAのサンプルサーバーを立て、PLC役をOPC UAに置き換える
 - [ ] IoTルールにLambdaを追加し、機器ごとの最新値をDynamoDBに保存する

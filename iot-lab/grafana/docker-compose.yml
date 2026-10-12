@@ -1,0 +1,16 @@
+services:
+  grafana:
+    image: grafana/grafana-oss:11.4.0
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      GF_INSTALL_PLUGINS: grafana-athena-datasource
+    volumes:
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  grafana-data:

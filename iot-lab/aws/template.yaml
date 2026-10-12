@@ -157,6 +157,64 @@ Resources:
         ResultConfiguration:
           OutputLocation: !Sub 's3://${DataBucket}/athena-results/'
 
+  # ---------------------------------------------------------------- visualization (Grafana, read-only)
+  GrafanaUser:
+    Type: AWS::IAM::User
+
+  GrafanaUserPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: grafana-athena-readonly
+      Users:
+        - !Ref GrafanaUser
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Run/read queries, but only against this lab's workgroup
+          - Effect: Allow
+            Action:
+              - athena:StartQueryExecution
+              - athena:GetQueryExecution
+              - athena:GetQueryResults
+              - athena:StopQueryExecution
+              - athena:GetWorkGroup
+              - athena:ListDatabases
+              - athena:ListTableMetadata
+            Resource: !Sub 'arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${AthenaWorkGroup}'
+          # Read table/partition metadata for this lab's database only
+          - Effect: Allow
+            Action:
+              - glue:GetDatabase
+              - glue:GetDatabases
+              - glue:GetTable
+              - glue:GetTables
+              - glue:GetPartitions
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog'
+              - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${GlueDatabase}'
+              - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${GlueDatabase}/*'
+          # Read the raw telemetry data ...
+          - Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub '${DataBucket.Arn}/raw/*'
+          # ... and read/write Athena's own query result cache (separate from the IoT rule's write path)
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource: !Sub '${DataBucket.Arn}/athena-results/*'
+          # Athena calls this before writing results. It sends no s3:prefix, so it cannot
+          # share the ListBucket statement below (a missing condition key would deny it).
+          - Effect: Allow
+            Action: s3:GetBucketLocation
+            Resource: !GetAtt DataBucket.Arn
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: !GetAtt DataBucket.Arn
+            Condition:
+              StringLike:
+                s3:prefix: ['raw/*', 'athena-results/*']
+
 Outputs:
   BucketName:
     Value: !Ref DataBucket
@@ -168,3 +226,5 @@ Outputs:
     Value: !Ref AthenaWorkGroup
   RuleName:
     Value: !Ref TelemetryToS3Rule
+  GrafanaUserName:
+    Value: !Ref GrafanaUser

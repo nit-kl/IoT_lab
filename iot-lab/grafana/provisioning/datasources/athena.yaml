@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: Athena (iot-lab)
+    uid: athena-iot-lab
+    type: grafana-athena-datasource
+    isDefault: true
+    jsonData:
+      authType: keys
+      defaultRegion: $__env{AWS_REGION}
+      workgroup: iot-lab
+      catalog: AwsDataCatalog
+      database: iot_lab
+    secureJsonData:
+      accessKey: $__env{AWS_ACCESS_KEY_ID}
+      secretKey: $__env{AWS_SECRET_ACCESS_KEY}

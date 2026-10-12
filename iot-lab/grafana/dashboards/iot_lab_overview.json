@@ -1,0 +1,99 @@
+{
+  "title": "IoT Lab Overview",
+  "uid": "iot-lab-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["iot-lab"],
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "室温(AHU-01)",
+      "description": "WHERE dt = 当日 で固定しています。時刻ピッカーを変えても範囲は変わりません(Athenaのスキャン量=コストを抑えるため)。",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-athena-datasource", "uid": "athena-iot-lab" },
+      "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-athena-datasource", "uid": "athena-iot-lab" },
+          "format": "timeseries",
+          "connectionArgs": { "catalog": "__default", "database": "__default", "region": "__default" },
+          "rawSQL": "SELECT from_iso8601_timestamp(ts) AS \"time\", metrics['room_temp_c'] AS room_temp_c\nFROM telemetry_raw\nWHERE dt = date_format(current_date, '%Y-%m-%d')\n  AND equipment_id = 'AHU-01' AND status = 'ok'\nORDER BY ts"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "モータ電流(PLC-LINE1)",
+      "description": "WHERE dt = 当日 で固定しています。時刻ピッカーを変えても範囲は変わりません。",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-athena-datasource", "uid": "athena-iot-lab" },
+      "fieldConfig": { "defaults": { "unit": "amp" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-athena-datasource", "uid": "athena-iot-lab" },
+          "format": "timeseries",
+          "connectionArgs": { "catalog": "__default", "database": "__default", "region": "__default" },
+          "rawSQL": "SELECT from_iso8601_timestamp(ts) AS \"time\", metrics['motor_current_a'] AS motor_current_a\nFROM telemetry_raw\nWHERE dt = date_format(current_date, '%Y-%m-%d')\n  AND equipment_id = 'PLC-LINE1' AND status = 'ok'\nORDER BY ts"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "本日の受信件数",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-athena-datasource", "uid": "athena-iot-lab" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-athena-datasource", "uid": "athena-iot-lab" },
+          "format": "table",
+          "connectionArgs": { "catalog": "__default", "database": "__default", "region": "__default" },
+          "rawSQL": "SELECT count(*) AS received_today\nFROM telemetry_raw\nWHERE dt = date_format(current_date, '%Y-%m-%d')"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "機器×ステータス×アラーム件数",
+      "description": "aws/queries.sql の 7番と同じ集計です。comm_error が増えていないかをここで見ます。",
+      "gridPos": { "h": 10, "w": 9, "x": 6, "y": 8 },
+      "datasource": { "type": "grafana-athena-datasource", "uid": "athena-iot-lab" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-athena-datasource", "uid": "athena-iot-lab" },
+          "format": "table",
+          "connectionArgs": { "catalog": "__default", "database": "__default", "region": "__default" },
+          "rawSQL": "SELECT equipment_id, status, count(*) AS n,\n       sum(CASE WHEN metrics['alarm_code'] > 0 THEN 1 ELSE 0 END) AS alarms\nFROM telemetry_raw\nWHERE dt = date_format(current_date, '%Y-%m-%d')\nGROUP BY equipment_id, status\nORDER BY equipment_id, status"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "送信遅延 上位10件",
+      "description": "aws/queries.sql の 4番と同じです。回線断からの復旧直後に遅延の大きい行が出ます。",
+      "gridPos": { "h": 10, "w": 9, "x": 15, "y": 8 },
+      "datasource": { "type": "grafana-athena-datasource", "uid": "athena-iot-lab" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-athena-datasource", "uid": "athena-iot-lab" },
+          "format": "table",
+          "connectionArgs": { "catalog": "__default", "database": "__default", "region": "__default" },
+          "rawSQL": "SELECT equipment_id, ts,\n       (received_at_ms - to_unixtime(from_iso8601_timestamp(ts)) * 1000) / 1000.0 AS delay_sec\nFROM telemetry_raw\nWHERE dt = date_format(current_date, '%Y-%m-%d')\nORDER BY delay_sec DESC\nLIMIT 10"
+        }
+      ]
+    }
+  ]
+}
