@@ -1,21 +1,23 @@
 # 店舗IoT 学習キット(スーパーの店舗設備・システムのシミュレータ → AWS IoT Core → S3 → Athena → Grafana / Lambda → DynamoDB → アラーム通知 / 遠隔操作)
 
-XCPチームの検証用です。スーパー1店舗の設備(売場空調・冷蔵ショーケース・電力計・バックヤードの冷凍機盤)と店舗のシステム(入店カウンタ・POS)を模擬し、店舗ゲートウェイからAWSに送ります。
+XCPチームの検証用です。スーパー1店舗の設備(売場空調・冷蔵ショーケース・電力計・バックヤードの冷凍機盤)と店舗のシステム(入店カウンタ・POS・在庫・発注システム)を模擬し、店舗ゲートウェイからAWSに送ります。
 
 ```
-simulator/run_store.py          店舗の設備・システムのシミュレータ(下の6つ)をまとめて起動。--except RC-01 で特定のものを除外
+simulator/run_store.py          店舗の設備・システムのシミュレータ(下の7つ)をまとめて起動。--except RC-01 で特定のものを除外
 simulator/aircon.py             売場空調 AC-01 を模擬する Modbus TCP サーバー(ポート5021)
 simulator/showcase.py           冷蔵ショーケース RC-01 を模擬する Modbus TCP サーバー(ポート5022)
 simulator/power_meter.py        電力計 PM-01 を模擬する Modbus TCP サーバー(ポート5023)
 simulator/refrigerator_plc.py   冷凍機盤 REF-01 の三菱電機 iQ-R を模擬する MCプロトコル(3Eフレーム/バイナリ)サーバー(ポート5010)
 simulator/people_counter.py     入店カウンタ PC-01 のREST APIを模擬する HTTP サーバー(ポート8081)
 simulator/pos_server.py         店舗サーバー(POS)のDB simulator/data/pos.db に取引を書き続ける
-simulator/store_model.py        来店・会計のモデルと商品マスタ(入店カウンタとPOSで共通)
+simulator/inventory_system.py   在庫・発注システム。POSの売上で在庫を減らし、10分ごとに在庫CSV(Shift_JIS)を simulator/data/outbox/ に書き出す
+simulator/store_model.py        来店・会計のモデルと商品マスタ(入店カウンタ・POS・在庫で共通)
 simulator/common.py             シミュレータの共通部品(ポート番号、運転スケジュール)
 simulator/force_alarm.py        異常コードの強制発生・解除、ショーケースの扉の開けっ放しを起こすテスト用ツール
 gateway/gateway.py              収集→変換→バッファ→MQTT送信、命令の受信→安全確認→書き込み を行う店舗ゲートウェイ
 gateway/points.json             ポイントリスト(タグ表)。機器ごとの接続先(host・port)もここに書く
 gateway/sources.py              入店カウンタ(API)とPOS(DB)から前回の続きの差分を取る(ハンズオン6)
+gateway/files.py                在庫CSVを検証・変換し、証明書でもらう一時的な認証情報でS3にアップロード(ハンズオン7)
 gateway/sources.json            店舗のシステムの接続先(enabled を true にすると取り込む)
 gateway/gateway_config.example.json  設定の雛形(setup_aws.py が gateway_config.json を自動作成)
 aws/template.yaml               CloudFormation(IoTポリシー、ルール、S3、Glueテーブル、Athena、Grafana用IAMユーザー、最新値・通知・命令の各Lambda/DynamoDB/SNS)
@@ -62,6 +64,9 @@ python aws/send_command.py --value 28.0
 
 # 入店カウンタとPOSを取り込む(ハンズオン6): gateway/sources.json の enabled を true にしてからゲートウェイを再起動
 # Athena で aws/queries.sql の10番以降(来店客数・売上・買上率・売れ筋)
+
+# 在庫CSVをファイル連携で取り込む(ハンズオン7): sources.json の INV も true にし、setup_aws.py を再実行してからゲートウェイを再起動
+# Athena で aws/queries.sql の16番以降(在庫日数・温度逸脱×在庫・店舗の1日)
 
 # Grafanaで見る(任意、Docker Desktopが必要)
 cd grafana && docker compose up -d   # http://localhost:3000 (admin / admin)

@@ -67,6 +67,10 @@ Resources:
           - Effect: Allow
             Action: iot:Receive
             Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/store-${Owner}/${GatewayId}/*/cmd'
+          # File transfer: exchange the certificate for temporary credentials of this role alias only
+          - Effect: Allow
+            Action: iot:AssumeRoleWithCertificate
+            Resource: !GetAtt FilesRoleAlias.RoleAliasArn
 
   # ---------------------------------------------------------------- routing (rules engine)
   RuleRole:
@@ -218,6 +222,7 @@ Resources:
               - !Sub '${DataBucket.Arn}/raw/*'
               - !Sub '${DataBucket.Arn}/people/*'
               - !Sub '${DataBucket.Arn}/pos/*'
+              - !Sub '${DataBucket.Arn}/inventory/*'
           # ... and read/write Athena's own query result cache (separate from the IoT rule's write path)
           - Effect: Allow
             Action:
@@ -234,7 +239,7 @@ Resources:
             Resource: !GetAtt DataBucket.Arn
             Condition:
               StringLike:
-                s3:prefix: ['raw/*', 'people/*', 'pos/*', 'athena-results/*']
+                s3:prefix: ['raw/*', 'people/*', 'pos/*', 'inventory/*', 'athena-results/*']
 
   # ---------------------------------------------------------------- latest value (Lambda -> DynamoDB)
   # S3 keeps the history; this table keeps only the current state, one item per equipment.
@@ -644,6 +649,79 @@ Resources:
             - {Name: items, Type: 'array<struct<jan:string,product_name:string,category:string,qty:int,unit_price_yen:int,amount_yen:int>>'}
             - {Name: received_at_ms, Type: bigint}
 
+  # ---------------------------------------------------------------- file transfer (inventory CSV -> S3 with temporary credentials)
+  # The gateway has no long-lived AWS keys. It presents its X.509 certificate to the IoT credential provider
+  # through this role alias and receives 1-hour credentials for FilesRole, which can only put inventory files.
+  FilesRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'xcp-store-iot-${Owner}-gateway-files'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: credentials.iot.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: put-inventory-files
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource:
+                  - !Sub '${DataBucket.Arn}/inventory/*'
+                  - !Sub '${DataBucket.Arn}/inventory-raw/*'
+
+  FilesRoleAlias:
+    Type: AWS::IoT::RoleAlias
+    Properties:
+      RoleAlias: !Sub 'xcp-store-iot-${Owner}-gateway-files'
+      RoleArn: !GetAtt FilesRole.Arn
+      CredentialDurationSeconds: 3600
+
+  InventoryTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: inventory_snapshot
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: csv
+          skip.header.line.count: '1'
+          projection.enabled: 'true'
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: 2026-01-01,NOW
+          projection.dt.interval: '1'
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub 's3://${DataBucket}/inventory/dt=${!dt}/'
+        PartitionKeys:
+          - {Name: dt, Type: string}
+        StorageDescriptor:
+          Location: !Sub 's3://${DataBucket}/inventory/'
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
+            Parameters:
+              field.delim: ','
+              serialization.format: ','
+          Columns:
+            - {Name: store_code, Type: string}
+            - {Name: jan, Type: string}
+            - {Name: product_name, Type: string}
+            - {Name: category, Type: string}
+            - {Name: location, Type: string}
+            - {Name: price_yen, Type: int}
+            - {Name: stock_qty, Type: int}
+            - {Name: reorder_point, Type: int}
+            - {Name: order_qty, Type: int}
+            - {Name: arrival_due, Type: string}
+            - {Name: snapshot_at, Type: string}
+
 Outputs:
   BucketName:
     Value: !Ref DataBucket
@@ -657,6 +735,8 @@ Outputs:
     Value: !Ref GlueDatabase
   TopicPrefix:
     Value: !Sub 'store-${Owner}'
+  FilesRoleAliasName:
+    Value: !Ref FilesRoleAlias
   RuleName:
     Value: !Ref TelemetryToS3Rule
   GrafanaUserName:

@@ -64,7 +64,10 @@ _PRODUCTS = [
     ("唐揚げ", "惣菜", 398, 3), ("緑茶 2L", "飲料", 178, 4), ("炭酸水 500ml", "飲料", 98, 4),
     ("ビール 6缶", "飲料", 1280, 2), ("ポテトチップス", "菓子", 148, 3),
 ]
-PRODUCTS = [{"jan": instore_jan(i + 1), "name": n, "category": c, "price_yen": p, "weight": w}
+# 陳列場所(棚割)。日配と飲料は冷蔵ショーケース RC-01 に並ぶ(温度逸脱のときに影響を受ける商品)
+LOCATIONS = {"日配": "RC-01", "飲料": "RC-01", "パン": "常温棚", "菓子": "常温棚", "青果": "青果平台",
+             "精肉": "精肉鮮魚ケース", "鮮魚": "精肉鮮魚ケース", "惣菜": "惣菜コーナー"}
+PRODUCTS = [{"jan": instore_jan(i + 1), "name": n, "category": c, "location": LOCATIONS[c], "price_yen": p, "weight": w}
             for i, (n, c, p, w) in enumerate(_PRODUCTS)]
 
 

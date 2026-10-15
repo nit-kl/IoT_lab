@@ -10,6 +10,7 @@
     REF-01  冷凍機盤          simulator/refrigerator_plc.py  MCプロトコル  5010
     PC-01   入店カウンタ      simulator/people_counter.py    HTTP API      8081   (ハンズオン6)
     POS     店舗サーバー      simulator/pos_server.py        SQLiteのDB    simulator/data/pos.db(ハンズオン6)
+    INV     在庫・発注システム simulator/inventory_system.py CSVファイル   simulator/data/outbox/(ハンズオン7)
 
 実行例:
   python simulator/run_store.py                      # すべて起動
@@ -34,6 +35,7 @@ SERVICES = {
     "REF-01": "refrigerator_plc.py",
     "PC-01": "people_counter.py",
     "POS": "pos_server.py",
+    "INV": "inventory_system.py",
 }
 VERBOSE = {"REF-01", "POS"}   # --verbose を渡すもの
 
@@ -46,7 +48,7 @@ def relay(name: str, proc: subprocess.Popen) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="店舗の設備・システムのシミュレータをまとめて起動")
-    ap.add_argument("--except", dest="excluded", nargs="*", default=[], choices=sorted(SERVICES),
+    ap.add_argument("--except", dest="excluded", nargs="*", default=[], choices=list(SERVICES),
                     help="起動しないもの(別のターミナルで個別に起動・停止する)")
     ap.add_argument("--verbose", action="store_true", help="冷凍機盤が読み書きされたデバイス、POSが書いた取引の件数を表示")
     args = ap.parse_args()

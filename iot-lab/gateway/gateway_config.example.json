@@ -12,5 +12,11 @@
       "cert": "certs/device.pem.crt",
       "key": "certs/private.pem.key"
     }
+  },
+  "aws": {
+    "region": "ap-northeast-1",
+    "bucket": "xcp-store-iot-yourname-123456789012",
+    "credentials_endpoint": "YOUR-ID.credentials.iot.ap-northeast-1.amazonaws.com",
+    "role_alias": "xcp-store-iot-yourname-gateway-files"
   }
 }

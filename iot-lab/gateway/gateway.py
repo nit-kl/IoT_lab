@@ -5,6 +5,7 @@
     (接続先は機器ごとに points.json の host / port。1台が応答しなくても他の機器は読み続ける)
   → ポイントリスト(points.json)に従って生値を工学値に変換
   → 店舗のシステム(入店カウンタのAPI、POSのDB)からは前回の続きの差分を取る(sources.py、ハンズオン6)
+  → 在庫・発注システムのCSVは検証・変換してS3に直接アップロードする(files.py、ハンズオン7)
   → JSON にして SQLite のバッファに積む(ストア&フォワード)
   → MQTT(AWS IoT Core なら TLS + X.509 証明書)で送信し、届いたらバッファから消す
   ← クラウドからの命令(…/cmd)を受け取り、安全確認をしてから機器に書き込み、結果(…/cmd_result)を返す
@@ -27,6 +28,7 @@ from pathlib import Path
 
 from pymodbus.client import ModbusTcpClient
 
+from files import S3Uploader
 from sources import load_sources
 
 log = logging.getLogger("gateway")
@@ -364,6 +366,9 @@ def main() -> None:
 
     readers = make_readers(points["equipment"])
     sources = load_sources(Path(args.sources), gw_id)
+    file_sources = [s for s in sources if getattr(s, "is_file_source", False)]
+    sources = [s for s in sources if s not in file_sources]
+    uploader = S3Uploader(cfg) if file_sources and not args.console else None
     console_marks: dict = {}   # --console のときはバッファを使わないので、ウォーターマークはメモリに持つ
     equipment = {eq["equipment_id"]: eq for eq in points["equipment"]}
     buf = Buffer(BASE_DIR / "buffer.db")
@@ -373,7 +378,7 @@ def main() -> None:
     seq = int(time.time())  # 再起動しても増え続ける連番(重複・欠損チェック用)
 
     log.info("開始: gateway=%s 機器=%d台 店舗システム=%s 周期=%ss モード=%s",
-             gw_id, len(points["equipment"]), ",".join(s.source_id for s in sources) or "なし",
+             gw_id, len(points["equipment"]), ",".join(s.source_id for s in sources + file_sources) or "なし",
              interval, "console" if args.console else "mqtt")
     while True:
         cycle_start = time.time()
@@ -421,6 +426,10 @@ def main() -> None:
             else:
                 buf.put_with_watermark(messages, src.source_id, new_mark)
             log.info("%s: %d件を取得(ウォーターマーク %s → %s)", src.source_id, len(messages), mark, new_mark)
+
+        # ファイル連携は MQTT を使わず、S3 に直接アップロードする(--console では検証と変換だけ)
+        for src in file_sources:
+            src.process(uploader)
 
         if not args.console:
             sent = flush(client, buf)

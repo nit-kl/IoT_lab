@@ -1,5 +1,5 @@
 {
-  "_comment": "店舗のシステム(機器ではないもの)の接続先。ハンズオン6で enabled を true にする。type: people_counter=入店カウンタのREST API / pos_db=店舗サーバー(POS)のDB。api_key は本来は秘密情報(実運用ではファイルに平文で書かず、OSの資格情報ストアやAWS Secrets Managerなどから読む)",
+  "_comment": "店舗のシステム(機器ではないもの)の接続先。ハンズオン6・7で enabled を true にする。type: people_counter=入店カウンタのREST API / pos_db=店舗サーバー(POS)のDB / inventory_csv=在庫・発注システムが書き出すCSVのフォルダ(ハンズオン7)。api_key は本来は秘密情報(実運用ではファイルに平文で書かず、OSの資格情報ストアやAWS Secrets Managerなどから読む)",
   "sources": [
     {
       "source_id": "PC-01",
@@ -15,6 +15,12 @@
       "enabled": false,
       "path": "../simulator/data/pos.db",
       "batch": 200
+    },
+    {
+      "source_id": "INV",
+      "type": "inventory_csv",
+      "enabled": false,
+      "path": "../simulator/data/outbox"
     }
   ]
 }

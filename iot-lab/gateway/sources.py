@@ -6,6 +6,7 @@
 
     PeopleCounterSource  入店カウンタのREST API。1分ごとの集計を「時刻」で続きから取る
     PosDbSource          店舗サーバー(POS)のDB。取引を「取引番号(連番)」で続きから取る
+    (ファイル連携の InventoryFileSource は files.py。こちらはMQTTではなくS3に直接アップロードする)
 
   どちらも poll(前回のウォーターマーク) → (送るメッセージの一覧, 新しいウォーターマーク) を返すだけで、
   ウォーターマークの保存はゲートウェイがバッファへの追加と同じトランザクションで行います
@@ -124,7 +125,9 @@ class PosDbSource:
         return out, str(txns[-1]["txn_id"] if txns else last_id)
 
 
-SOURCE_TYPES = {"people_counter": PeopleCounterSource, "pos_db": PosDbSource}
+from files import InventoryFileSource  # noqa: E402
+
+SOURCE_TYPES = {"people_counter": PeopleCounterSource, "pos_db": PosDbSource, "inventory_csv": InventoryFileSource}
 
 
 def load_sources(path: Path, gateway_id: str) -> list:

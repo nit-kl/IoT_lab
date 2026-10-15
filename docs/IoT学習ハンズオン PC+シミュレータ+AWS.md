@@ -29,7 +29,7 @@ PC側は自分で書いたコードが動く範囲、AWS側はCloudFormationで�
 | --- | --- | --- |
 | simulator/aircon.py・showcase.py・power\_meter.py | 売場空調・冷蔵ショーケース・電力計を1台ずつ模擬するModbus TCPサーバー | レジスタ、スケーリング、ワード順 |
 | simulator/refrigerator\_plc.py | 冷凍機盤のPLC(iQ-R)を模擬するMCプロトコルサーバー | PLCのデバイス(D・M) |
-| simulator/run\_store.py | 上の4つ(とハンズオン6の入店カウンタ・POS)をまとめて起動し、ログを1画面に出す | 1機器=1サービスの構成 |
+| simulator/run\_store.py | 上の4つ(とハンズオン6・7の入店カウンタ・POS・在庫システム)をまとめて起動し、ログを1画面に出す | 1機器=1サービスの構成 |
 | gateway/points.json | ポイントリスト(タグ表) | 現場で最初に入手すべき資料の形 |
 | gateway/gateway.py | 収集→変換→バッファ→MQTT送信 | ストア&フォワード、UTC、連番、QoS1 |
 | aws/template.yaml | IoTポリシー、ルール、S3、Glueテーブル、Athena | 最小権限、ルールエンジン、パーティション |
@@ -254,5 +254,5 @@ python aws/teardown_aws.py
 - [x] Grafana(ローカルのDocker)とAthenaをつないで店舗の設備をグラフ化する → [IoT学習ハンズオン2 Grafana可視化](./IoT学習ハンズオン2%20Grafana可視化.md)
 - [x] 機器ごとの最新値をDynamoDBに保存する → [IoT学習ハンズオン3](./IoT学習ハンズオン3%20Lambda%2BDynamoDB最新値.md)
 - [x] 入店カウンタ(API)とPOS(店舗サーバーのDB)から、設備以外のデータを取り込む → [IoT学習ハンズオン6](./IoT学習ハンズオン6%20入店カウンタとPOS.md)
-- [ ] 在庫・発注システムのCSVをファイル連携で取り込み、売上・客数・温度・在庫を突き合わせる(ハンズオン7で作成予定)
+- [x] 在庫・発注システムのCSVをファイル連携で取り込み、売上・客数・温度・在庫を突き合わせる → [IoT学習ハンズオン7](./IoT学習ハンズオン7%20在庫連携と突き合わせ分析.md)
 - [ ] ゲートウェイをAWS IoT Greengrassのコンポーネントにする

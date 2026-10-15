@@ -77,6 +77,8 @@ ATHENA_MIN_BYTES = 10 * 1024**2   # Athenaは1クエリ最低10MB分課金
 PEOPLE_PER_HOUR = 60     # 入店カウンタの集計(1分1件)
 POS_TXN_PER_HOUR = 100   # POSの取引(simulator/store_model.py の来店モデルで1日約2,400件)
 POS_MSG_BYTES = 1200     # POSの取引1件のJSON(明細つき)
+INVENTORY_FILES_PER_HOUR = 6   # 在庫CSVの書き出し(10分ごと。1ファイルを原本と変換後の2回PUT)
+INVENTORY_FILE_BYTES = 2500    # 在庫CSV 1ファイル(20商品)
 
 SCENARIOS = {
     "study": dict(title="学習(ゲートウェイを3時間動かす)", hours=3, athena_queries=20, grafana_hours=1,
@@ -136,6 +138,13 @@ def usage(s: dict) -> list[tuple[str, str, str, float]]:
         ("6", "Athena 手動クエリのGET(前日+当日の全ファイル)", "s3_get_request", s["athena_queries"] * objects6_today * 2),
         ("6", "Athena 手動クエリのスキャン量", "athena_scanned_tb", s["athena_queries"] * ATHENA_MIN_BYTES / 1024**4),
         ("6", "Glueデータカタログの参照", "glue_catalog_request", s["athena_queries"] * 2),
+        ("7", "S3 PUT(在庫CSVの原本と変換後)", "s3_put_request", s["hours"] * INVENTORY_FILES_PER_HOUR * 2),
+        ("7", "S3 保存容量", "s3_storage_gb_month",
+         s["hours"] * INVENTORY_FILES_PER_HOUR * 2 * INVENTORY_FILE_BYTES / gb * (s["hours"] / 720) / 2),
+        ("7", "Athena 手動クエリのGET(在庫CSV+突き合わせる全テーブル)", "s3_get_request",
+         s["athena_queries"] * (min(s["hours"], 24) * INVENTORY_FILES_PER_HOUR + objects_today + objects6_today) * 2),
+        ("7", "Athena 手動クエリのスキャン量", "athena_scanned_tb", s["athena_queries"] * ATHENA_MIN_BYTES / 1024**4),
+        ("7", "Glueデータカタログの参照", "glue_catalog_request", s["athena_queries"] * 4),
     ]
 
 

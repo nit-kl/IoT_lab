@@ -97,7 +97,7 @@ def issue_certificate(iot, policy_name: str, thing_name: str) -> None:
     print("      秘密鍵は gateway/certs/private.pem.key に保存しました。他人に渡さないでください")
 
 
-def write_gateway_config(iot, owner: str, gateway_id: str, outputs: dict) -> None:
+def write_gateway_config(iot, owner: str, gateway_id: str, outputs: dict, region: str) -> None:
     endpoint = iot.describe_endpoint(endpointType="iot:Data-ATS")["endpointAddress"]
     cfg = json.loads((GATEWAY_DIR / "gateway_config.example.json").read_text(encoding="utf-8"))
     cfg["owner"] = owner
@@ -105,6 +105,13 @@ def write_gateway_config(iot, owner: str, gateway_id: str, outputs: dict) -> Non
     cfg["mqtt"]["host"] = endpoint
     cfg["mqtt"]["client_id"] = outputs["ThingName"]   # IoTポリシーで、モノの名前と同じclient IDだけ接続を許可している
     cfg["mqtt"]["topic_prefix"] = outputs["TopicPrefix"]
+    # ファイル連携(ハンズオン7):証明書で一時的な認証情報をもらう先と、アップロード先
+    cfg["aws"] = {
+        "region": region,
+        "bucket": outputs["BucketName"],
+        "credentials_endpoint": iot.describe_endpoint(endpointType="iot:CredentialProvider")["endpointAddress"],
+        "role_alias": outputs["FilesRoleAliasName"],
+    }
     (GATEWAY_DIR / "gateway_config.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"[3/4] gateway/gateway_config.json を作成しました(エンドポイント: {endpoint})")
 
@@ -155,7 +162,7 @@ def main() -> None:
     outputs = deploy_stack(session.client("cloudformation"), owner, args.gateway_id)
     iot = session.client("iot")
     issue_certificate(iot, outputs["PolicyName"], outputs["ThingName"])
-    write_gateway_config(iot, owner, args.gateway_id, outputs)
+    write_gateway_config(iot, owner, args.gateway_id, outputs, args.region)
     write_grafana_env(session.client("iam"), args.region, outputs)
     if args.email:
         subscribe_email(session.client("sns"), outputs["AlarmTopicArn"], args.email)

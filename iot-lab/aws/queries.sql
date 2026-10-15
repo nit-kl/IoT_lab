@@ -178,3 +178,102 @@ FROM (
         WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d')))
 )
 WHERE txn_id - prev_txn_id > 1;
+
+-- ============================================================ ここから在庫と突き合わせ(ハンズオン7)
+-- 在庫は inventory_snapshot テーブル(在庫・発注システムが10分ごとに書き出すCSV)。
+-- 在庫は「その時点の一覧(スナップショット)」なので、同じ商品が書き出しのたびに1行ずつ増えていきます。
+-- 「今の在庫」は、いちばん新しい在庫日時(snapshot_at)の行だけを使います。
+
+-- 16. 今の在庫と在庫日数(在庫数 ÷ 直近24時間の販売数)。小さい順 = 欠品が近い順
+--     ※ POSのデータが24時間分たまっていないうちは販売数が少なく出るので、在庫日数は大きめに出ます
+WITH latest AS (
+  SELECT * FROM inventory_snapshot
+  WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d'))
+    AND snapshot_at = (SELECT max(snapshot_at) FROM inventory_snapshot
+                       WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d')))
+), txn AS (
+  SELECT * FROM (
+    SELECT *, row_number() OVER (PARTITION BY store_code, txn_id ORDER BY received_at_ms) AS rn
+    FROM pos_transactions
+    WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d'))
+      AND from_iso8601_timestamp(ts) > current_timestamp - interval '24' hour
+  ) WHERE rn = 1
+), sold AS (
+  SELECT i.jan, sum(i.qty) AS sold_24h
+  FROM txn CROSS JOIN UNNEST(items) AS t(i)
+  GROUP BY 1
+)
+SELECT l.category, l.product_name, l.location, l.stock_qty, l.reorder_point, s.sold_24h,
+       round(l.stock_qty * 1.0 / nullif(s.sold_24h, 0), 2) AS days_of_stock,
+       l.arrival_due
+FROM latest l LEFT JOIN sold s ON l.jan = s.jan
+ORDER BY days_of_stock;
+
+-- 17. 発注点を割っている商品と、入荷予定(今の在庫で)
+SELECT category, product_name, stock_qty, reorder_point, order_qty,
+       date_format(at_timezone(from_iso8601_timestamp(nullif(arrival_due, '')), 'Asia/Tokyo'), '%m/%d %H:%i') AS arrival_jst
+FROM inventory_snapshot
+WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d'))
+  AND snapshot_at = (SELECT max(snapshot_at) FROM inventory_snapshot
+                     WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d')))
+  AND (stock_qty <= reorder_point OR arrival_due <> '')
+ORDER BY stock_qty * 1.0 / reorder_point;
+
+-- 18. 温度逸脱 × 在庫:冷蔵ショーケース RC-01 が上限10℃を超えていた(霜取り中を除く)10分間ごとに、
+--     そのケースに並んでいた商品(陳列場所 RC-01)の在庫数と在庫金額。廃棄になるかもしれない金額の目安
+--     設備(Modbus)と基幹システム(CSV)という、まったく別の経路のデータを10分単位の時刻で突き合わせる
+WITH over AS (
+  SELECT from_unixtime(floor(to_unixtime(from_iso8601_timestamp(ts)) / 600) * 600) AS slot,
+         max(metrics['case_temp_c']) AS max_temp_c, count(*) AS samples_over_10c
+  FROM telemetry_raw
+  WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d'))
+    AND equipment_id = 'RC-01' AND status = 'ok'
+    AND metrics['case_temp_c'] > 10 AND metrics['defrost'] = 0
+  GROUP BY 1
+), stock AS (
+  SELECT from_unixtime(floor(to_unixtime(from_iso8601_timestamp(snapshot_at)) / 600) * 600) AS slot,
+         sum(stock_qty) AS stock_qty, sum(stock_qty * price_yen) AS stock_value_yen
+  FROM inventory_snapshot
+  WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d'))
+    AND location = 'RC-01'
+  GROUP BY 1
+)
+SELECT date_format(at_timezone(o.slot, 'Asia/Tokyo'), '%m/%d %H:%i') AS from_jst,
+       o.max_temp_c, o.samples_over_10c, s.stock_qty, s.stock_value_yen
+FROM over o LEFT JOIN stock s ON o.slot = s.slot
+ORDER BY o.slot;
+
+-- 19. 店舗の1日(日本時間の1時間ごと):来店客数・客数・売上・電力・室温・ショーケースの温度逸脱を1つの表にする
+--     入店カウンタ(API)・POS(DB)・設備(Modbus)の3つの経路のデータを、時刻で突き合わせる
+WITH visit AS (
+  SELECT date_trunc('hour', at_timezone(from_iso8601_timestamp(ts), 'Asia/Tokyo')) AS h, sum(in_count) AS visitors
+  FROM (SELECT DISTINCT sensor_id, ts, in_count FROM people_count
+        WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d')))
+  GROUP BY 1
+), sale AS (
+  SELECT date_trunc('hour', at_timezone(from_iso8601_timestamp(ts), 'Asia/Tokyo')) AS h,
+         count_if(txn_type = 'SALE') - count_if(txn_type = 'VOID') AS customers, sum(total_yen) AS sales_yen
+  FROM (SELECT *, row_number() OVER (PARTITION BY store_code, txn_id ORDER BY received_at_ms) AS rn
+        FROM pos_transactions
+        WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d')))
+  WHERE rn = 1
+  GROUP BY 1
+), equip AS (
+  SELECT date_trunc('hour', at_timezone(from_iso8601_timestamp(ts), 'Asia/Tokyo')) AS h,
+         round(avg(CASE WHEN equipment_id = 'PM-01' THEN metrics['power_kw'] END), 1) AS avg_power_kw,
+         round(max(CASE WHEN equipment_id = 'PM-01' THEN metrics['energy_kwh'] END)
+               - min(CASE WHEN equipment_id = 'PM-01' THEN metrics['energy_kwh'] END), 1) AS used_kwh,
+         round(avg(CASE WHEN equipment_id = 'AC-01' THEN metrics['room_temp_c'] END), 1) AS avg_room_temp_c,
+         count_if(equipment_id = 'RC-01' AND metrics['case_temp_c'] > 10 AND metrics['defrost'] = 0) AS rc_over_10c
+  FROM telemetry_raw
+  WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d'))
+    AND status = 'ok'
+  GROUP BY 1
+)
+SELECT date_format(e.h, '%m/%d %H:00') AS hour_jst, v.visitors, s.customers, s.sales_yen,
+       e.avg_power_kw, e.used_kwh, e.avg_room_temp_c, e.rc_over_10c
+FROM equip e
+LEFT JOIN visit v ON e.h = v.h
+LEFT JOIN sale s ON e.h = s.h
+WHERE date(e.h) = date(at_timezone(current_timestamp, 'Asia/Tokyo'))
+ORDER BY e.h;
