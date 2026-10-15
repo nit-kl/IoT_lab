@@ -1,19 +1,21 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  IoT learning lab - AWS IoT Core -> S3 (raw JSON, partitioned by date) -> Athena,
-  plus IoT Core -> Lambda -> DynamoDB (latest value per equipment).
+  xcp store IoT PoC (supermarket store equipment) - AWS IoT Core -> S3 (raw JSON, partitioned by date) -> Athena,
+  plus IoT Core -> Lambda -> DynamoDB (latest value per equipment), alarm mail and remote control.
   Everything here is pay-per-use (no always-on instances). Delete with teardown_aws.py.
 
+# Naming: every name starts with xcp-store-iot-<Owner> (Glue/IoT rule names use '_' instead of '-'),
+# so team members can share one AWS account. MQTT topics are store-<Owner>/<GatewayId>/<equipment>/...
 Parameters:
+  Owner:
+    Type: String
+    AllowedPattern: '[a-z0-9]{1,16}'
+    Description: Who owns this stack within the team (lowercase letters/digits, e.g. kojima)
   GatewayId:
     Type: String
-    Default: gw01
+    Default: store01
     AllowedPattern: '[a-zA-Z0-9_-]+'
-    Description: Gateway ID (also used as MQTT client ID and IoT thing name)
-  TopicPrefix:
-    Type: String
-    Default: lab
-    AllowedPattern: '[a-zA-Z0-9_-]+'
+    Description: Store gateway ID (used in MQTT topics; the IoT thing name is xcp-store-iot-<Owner>-<GatewayId>)
   RetentionDays:
     Type: Number
     Default: 90
@@ -24,6 +26,7 @@ Resources:
   DataBucket:
     Type: AWS::S3::Bucket
     Properties:
+      BucketName: !Sub 'xcp-store-iot-${Owner}-${AWS::AccountId}'
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -39,36 +42,37 @@ Resources:
   GatewayThing:
     Type: AWS::IoT::Thing
     Properties:
-      ThingName: !Ref GatewayId
+      ThingName: !Sub 'xcp-store-iot-${Owner}-${GatewayId}'
 
   GatewayPolicy:
     Type: AWS::IoT::Policy
     Properties:
-      PolicyName: !Sub '${GatewayId}-policy'
+      PolicyName: !Sub 'xcp-store-iot-${Owner}-${GatewayId}-policy'
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
           # Least privilege: connect only with its own client ID ...
           - Effect: Allow
             Action: iot:Connect
-            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/${GatewayId}'
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:client/xcp-store-iot-${Owner}-${GatewayId}'
           # ... and publish only under its own topic
           - Effect: Allow
             Action: iot:Publish
-            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/${TopicPrefix}/${GatewayId}/*'
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/store-${Owner}/${GatewayId}/*'
           # Remote control: subscribe to exactly its own command filter ('+' is matched literally here) ...
           - Effect: Allow
             Action: iot:Subscribe
-            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/${TopicPrefix}/${GatewayId}/+/cmd'
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/store-${Owner}/${GatewayId}/+/cmd'
           # ... and receive commands addressed to its own equipment only
           - Effect: Allow
             Action: iot:Receive
-            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/${TopicPrefix}/${GatewayId}/*/cmd'
+            Resource: !Sub 'arn:${AWS::Partition}:iot:${AWS::Region}:${AWS::AccountId}:topic/store-${Owner}/${GatewayId}/*/cmd'
 
   # ---------------------------------------------------------------- routing (rules engine)
   RuleRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub 'xcp-store-iot-${Owner}-iot-rule'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -89,12 +93,13 @@ Resources:
   TelemetryToS3Rule:
     Type: AWS::IoT::TopicRule
     Properties:
+      RuleName: !Sub 'xcp_store_iot_${Owner}_telemetry_to_s3'
       TopicRulePayload:
         Description: Store every telemetry message in S3 as one JSON object
         AwsIotSqlVersion: '2016-03-23'
         RuleDisabled: false
         # received_at_ms = when AWS received it. Compare with ts (when the gateway read it).
-        Sql: !Sub "SELECT *, timestamp() AS received_at_ms FROM '${TopicPrefix}/+/+/telemetry'"
+        Sql: !Sub "SELECT *, timestamp() AS received_at_ms FROM 'store-${Owner}/+/+/telemetry'"
         Actions:
           - S3:
               BucketName: !Ref DataBucket
@@ -113,7 +118,7 @@ Resources:
     Properties:
       CatalogId: !Ref AWS::AccountId
       DatabaseInput:
-        Name: iot_lab
+        Name: !Sub 'xcp_store_iot_${Owner}'
 
   TelemetryTable:
     Type: AWS::Glue::Table
@@ -157,7 +162,7 @@ Resources:
   AthenaWorkGroup:
     Type: AWS::Athena::WorkGroup
     Properties:
-      Name: iot-lab
+      Name: !Sub 'xcp-store-iot-${Owner}'
       RecursiveDeleteOption: true
       WorkGroupConfiguration:
         EnforceWorkGroupConfiguration: true
@@ -169,6 +174,8 @@ Resources:
   # ---------------------------------------------------------------- visualization (Grafana, read-only)
   GrafanaUser:
     Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub 'xcp-store-iot-${Owner}-grafana'
 
   GrafanaUserPolicy:
     Type: AWS::IAM::Policy
@@ -229,6 +236,7 @@ Resources:
   LatestTable:
     Type: AWS::DynamoDB::Table
     Properties:
+      TableName: !Sub 'xcp-store-iot-${Owner}-latest'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - {AttributeName: equipment_id, AttributeType: S}
@@ -241,12 +249,14 @@ Resources:
   LatestValueLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
+      LogGroupName: !Sub '/xcp/store-iot/${Owner}/latest-value'
       # Logs are kept forever (and billed) unless a retention is set
       RetentionInDays: 7
 
   LatestValueRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub 'xcp-store-iot-${Owner}-latest-value'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -271,6 +281,7 @@ Resources:
   LatestValueFunction:
     Type: AWS::Lambda::Function
     Properties:
+      FunctionName: !Sub 'xcp-store-iot-${Owner}-latest-value'
       Runtime: python3.13
       Handler: index.handler
       Role: !GetAtt LatestValueRole.Arn
@@ -290,11 +301,12 @@ Resources:
   LatestValueRule:
     Type: AWS::IoT::TopicRule
     Properties:
+      RuleName: !Sub 'xcp_store_iot_${Owner}_latest_value'
       TopicRulePayload:
         Description: Keep the latest value per equipment in DynamoDB
         AwsIotSqlVersion: '2016-03-23'
         RuleDisabled: false
-        Sql: !Sub "SELECT *, timestamp() AS received_at_ms FROM '${TopicPrefix}/+/+/telemetry'"
+        Sql: !Sub "SELECT *, timestamp() AS received_at_ms FROM 'store-${Owner}/+/+/telemetry'"
         Actions:
           - Lambda:
               FunctionArn: !GetAtt LatestValueFunction.Arn
@@ -318,12 +330,14 @@ Resources:
   AlarmTopic:
     Type: AWS::SNS::Topic
     Properties:
-      DisplayName: iot-lab alarm
+      TopicName: !Sub 'xcp-store-iot-${Owner}-alarm'
+      DisplayName: xcp store-iot alarm
 
   # One item per alarm that has been notified and not yet recovered
   AlarmStateTable:
     Type: AWS::DynamoDB::Table
     Properties:
+      TableName: !Sub 'xcp-store-iot-${Owner}-alarm-state'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - {AttributeName: pk, AttributeType: S}
@@ -333,11 +347,13 @@ Resources:
   AlarmNotifierLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
+      LogGroupName: !Sub '/xcp/store-iot/${Owner}/alarm-notifier'
       RetentionInDays: 7
 
   AlarmNotifierRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub 'xcp-store-iot-${Owner}-alarm-notifier'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -377,6 +393,7 @@ Resources:
   AlarmNotifierFunction:
     Type: AWS::Lambda::Function
     Properties:
+      FunctionName: !Sub 'xcp-store-iot-${Owner}-alarm-notifier'
       Runtime: python3.13
       Handler: index.handler
       Role: !GetAtt AlarmNotifierRole.Arn
@@ -390,6 +407,8 @@ Resources:
           STATE_TABLE: !Ref AlarmStateTable
           TOPIC_ARN: !Ref AlarmTopic
           STALE_SEC: '120'
+          # Food hygiene (HACCP): chilled showcases are kept at or below 10 degC
+          TEMP_MAX_C: '10'
       Code:
         # setup_aws.py replaces the line below with the contents of aws/lambda/alarm_notifier.py
         ZipFile: |
@@ -410,6 +429,7 @@ Resources:
   StaleCheckSchedule:
     Type: AWS::Scheduler::Schedule
     Properties:
+      Name: !Sub 'xcp-store-iot-${Owner}-stale-check'
       ScheduleExpression: rate(1 minute)
       FlexibleTimeWindow: {Mode: 'OFF'}
       State: ENABLED
@@ -421,6 +441,7 @@ Resources:
   StaleCheckSchedulerRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub 'xcp-store-iot-${Owner}-stale-check-scheduler'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -444,6 +465,7 @@ Resources:
   CommandTable:
     Type: AWS::DynamoDB::Table
     Properties:
+      TableName: !Sub 'xcp-store-iot-${Owner}-commands'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - {AttributeName: command_id, AttributeType: S}
@@ -453,6 +475,7 @@ Resources:
   CommandRuleRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub 'xcp-store-iot-${Owner}-cmd-rule'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -473,11 +496,12 @@ Resources:
   CommandResultRule:
     Type: AWS::IoT::TopicRule
     Properties:
+      RuleName: !Sub 'xcp_store_iot_${Owner}_cmd_result'
       TopicRulePayload:
         Description: Record command results (audit log)
         AwsIotSqlVersion: '2016-03-23'
         RuleDisabled: false
-        Sql: !Sub "SELECT *, timestamp() AS received_at_ms FROM '${TopicPrefix}/+/+/cmd_result'"
+        Sql: !Sub "SELECT *, timestamp() AS received_at_ms FROM 'store-${Owner}/+/+/cmd_result'"
         Actions:
           - DynamoDBv2:
               RoleArn: !GetAtt CommandRuleRole.Arn
@@ -498,6 +522,10 @@ Outputs:
     Value: !Ref GatewayThing
   AthenaWorkGroup:
     Value: !Ref AthenaWorkGroup
+  GlueDatabaseName:
+    Value: !Ref GlueDatabase
+  TopicPrefix:
+    Value: !Sub 'store-${Owner}'
   RuleName:
     Value: !Ref TelemetryToS3Rule
   GrafanaUserName:

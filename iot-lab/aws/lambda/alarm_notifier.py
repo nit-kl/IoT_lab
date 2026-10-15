@@ -2,6 +2,7 @@
 # setup_aws.py がこのファイルを template.yaml に埋め込んでデプロイします
 import os
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import boto3
 from boto3.dynamodb.types import TypeDeserializer
@@ -11,6 +12,7 @@ latest = ddb.Table(os.environ["LATEST_TABLE"])
 state = ddb.Table(os.environ["STATE_TABLE"])  # 通知済みの異常だけを持つ(1異常=1行)
 sns = boto3.client("sns")
 STALE_SEC = int(os.environ["STALE_SEC"])
+TEMP_MAX = Decimal(os.environ["TEMP_MAX_C"])  # ショーケースの庫内温度の上限
 JST = timezone(timedelta(hours=9))
 CCF = state.meta.client.exceptions.ConditionalCheckFailedException
 
@@ -54,12 +56,22 @@ def on_change(new, old):
         return
     if old.get("status") == "comm_error":
         clear_alarm(eq, "comm", ts)
-    code = new.get("metrics", {}).get("alarm_code", 0)
-    prev = old.get("metrics", {}).get("alarm_code", 0)
+    m, pm = new.get("metrics", {}), old.get("metrics", {})
+    code, prev = m.get("alarm_code", 0), pm.get("alarm_code", 0)
     if code and prev:  # 2回続けて異常なら通知(オンディレイ)
         raise_alarm(eq, "alarm", f"異常コード {int(code)}", ts)
     elif prev and not code:
         clear_alarm(eq, "alarm", ts)
+    if "case_temp_c" in m:  # ショーケース
+        if hot(m) and hot(pm):
+            raise_alarm(eq, "temp", f"庫内温度 {m['case_temp_c']}℃(上限 {TEMP_MAX}℃)", ts)
+        elif pm.get("case_temp_c", 0) > TEMP_MAX >= m["case_temp_c"]:
+            clear_alarm(eq, "temp", ts)
+
+
+def hot(m):
+    # 霜取り中は庫内温度が上がるのが正常なので、上限を超えても異常としない
+    return m.get("case_temp_c", 0) > TEMP_MAX and not m.get("defrost")
 
 
 def check_stale():

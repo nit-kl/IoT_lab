@@ -1,11 +1,11 @@
 """
-DynamoDB に保存された「機器ごとの最新値」を表示するスクリプト
+DynamoDB に保存された「店舗の機器ごとの最新値」を表示するスクリプト
 
   - ts は UTC で保存されています。表示のときだけ日本時間(JST)に変換します
   - 「何秒前の値か」を出し、一定時間更新が無い機器は STALE(古い)と表示します
     (最新値テーブルを使った死活監視の考え方)
 
-実行: python aws/show_latest.py [--watch 5] [--stale-sec 60] [--region ap-northeast-1] [--profile 名前]
+実行: python aws/show_latest.py [--watch 5] [--stale-sec 60] [--owner kojima] [--region ap-northeast-1] [--profile 名前]
 """
 import argparse
 import time
@@ -13,7 +13,8 @@ from datetime import datetime, timedelta, timezone
 
 import boto3
 
-STACK_NAME = "iot-lab"
+import naming
+
 JST = timezone(timedelta(hours=9))
 
 
@@ -44,11 +45,11 @@ def main() -> None:
     ap.add_argument("--profile", default=None)
     ap.add_argument("--watch", type=int, default=0, help="指定秒ごとに繰り返し表示(Ctrl+Cで終了)")
     ap.add_argument("--stale-sec", type=int, default=60, help="この秒数より古い値を STALE と表示")
+    ap.add_argument("--owner", default=None, help="setup_aws.py で指定した owner(省略時は gateway_config.json から)")
     args = ap.parse_args()
 
     session = boto3.Session(profile_name=args.profile, region_name=args.region)
-    outputs = session.client("cloudformation").describe_stacks(StackName=STACK_NAME)["Stacks"][0]["Outputs"]
-    table_name = {o["OutputKey"]: o["OutputValue"] for o in outputs}.get("LatestTableName")
+    table_name = naming.stack_outputs(session, naming.resolve_owner(args.owner)).get("LatestTableName")
     if not table_name:
         raise SystemExit("最新値テーブルがありません。先に python aws/setup_aws.py を実行してください")
     table = session.resource("dynamodb").Table(table_name)

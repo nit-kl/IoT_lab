@@ -8,11 +8,15 @@ AWS 側の環境を作るスクリプト(Windows / Mac / Linux 共通)
 
   (--email を付けると、アラーム通知メールの購読も登録)
 
+リソースの名前はすべて xcp-store-iot-<owner>-… になります(命名のきまりは aws/naming.py)。
+同じAWSアカウントをチームで共用するため、初回は --owner で自分の名前(英小文字・数字)を指定します。
+2回目以降は gateway/gateway_config.json に保存された owner を使うので、省略できます。
+
 Lambda のコードは aws/lambda/*.py が正本です。template.yaml の「# __CODE:ファイル名__」の行に
 埋め込んでデプロイするので、コードを書き換えたらこのスクリプトを再実行すれば反映されます。
 
 前提: AWS CLI で認証情報を設定済み(aws configure または aws sso login)
-実行: python aws/setup_aws.py [--email you@example.com] [--region ap-northeast-1] [--profile 名前]
+実行: python aws/setup_aws.py --owner kojima [--email you@example.com] [--region ap-northeast-1] [--profile 名前]
 """
 import argparse
 import json
@@ -22,11 +26,12 @@ from pathlib import Path
 
 import boto3
 
+import naming
+
 ROOT = Path(__file__).resolve().parent.parent
 GATEWAY_DIR = ROOT / "gateway"
 CERT_DIR = GATEWAY_DIR / "certs"
 GRAFANA_DIR = ROOT / "grafana"
-STACK_NAME = "iot-lab"
 ROOT_CA_URL = "https://www.amazontrust.com/repository/AmazonRootCA1.pem"
 CODE_MARKER = re.compile(r"^( *)# __CODE:(\w+)__$", re.MULTILINE)
 ZIPFILE_LIMIT = 4096  # CloudFormation のインラインコード(ZipFile)の上限文字数
@@ -45,30 +50,33 @@ def build_template() -> str:
     return CODE_MARKER.sub(embed_code, body)
 
 
-def deploy_stack(cfn, gateway_id: str) -> dict:
+def deploy_stack(cfn, owner: str, gateway_id: str) -> dict:
     body = build_template()
-    params = [{"ParameterKey": "GatewayId", "ParameterValue": gateway_id}]
+    stack = naming.stack_name(owner)
+    params = [{"ParameterKey": "Owner", "ParameterValue": owner},
+              {"ParameterKey": "GatewayId", "ParameterValue": gateway_id}]
+    # IAMロールなどに名前を付けているので CAPABILITY_NAMED_IAM が必要
+    args = dict(StackName=stack, TemplateBody=body, Parameters=params, Tags=naming.tags(owner),
+                Capabilities=["CAPABILITY_NAMED_IAM"])
     try:
-        cfn.describe_stacks(StackName=STACK_NAME)
+        cfn.describe_stacks(StackName=stack)
         exists = True
     except cfn.exceptions.ClientError:
         exists = False
 
     if not exists:
-        print(f"[1/4] スタック {STACK_NAME} を作成中…(1〜3分)")
-        cfn.create_stack(StackName=STACK_NAME, TemplateBody=body, Parameters=params,
-                         Capabilities=["CAPABILITY_IAM"])
-        cfn.get_waiter("stack_create_complete").wait(StackName=STACK_NAME)
+        print(f"[1/4] スタック {stack} を作成中…(1〜3分)")
+        cfn.create_stack(**args)
+        cfn.get_waiter("stack_create_complete").wait(StackName=stack)
     else:
-        print(f"[1/4] スタック {STACK_NAME} は作成済み。変更があれば更新します")
+        print(f"[1/4] スタック {stack} は作成済み。変更があれば更新します")
         try:
-            cfn.update_stack(StackName=STACK_NAME, TemplateBody=body, Parameters=params,
-                             Capabilities=["CAPABILITY_IAM"])
-            cfn.get_waiter("stack_update_complete").wait(StackName=STACK_NAME)
+            cfn.update_stack(**args)
+            cfn.get_waiter("stack_update_complete").wait(StackName=stack)
         except cfn.exceptions.ClientError as e:
             if "No updates are to be performed" not in str(e):
                 raise
-    outputs = cfn.describe_stacks(StackName=STACK_NAME)["Stacks"][0]["Outputs"]
+    outputs = cfn.describe_stacks(StackName=stack)["Stacks"][0]["Outputs"]
     return {o["OutputKey"]: o["OutputValue"] for o in outputs}
 
 
@@ -89,28 +97,33 @@ def issue_certificate(iot, policy_name: str, thing_name: str) -> None:
     print("      秘密鍵は gateway/certs/private.pem.key に保存しました。他人に渡さないでください")
 
 
-def write_gateway_config(iot, gateway_id: str) -> None:
+def write_gateway_config(iot, owner: str, gateway_id: str, outputs: dict) -> None:
     endpoint = iot.describe_endpoint(endpointType="iot:Data-ATS")["endpointAddress"]
     cfg = json.loads((GATEWAY_DIR / "gateway_config.example.json").read_text(encoding="utf-8"))
+    cfg["owner"] = owner
     cfg["gateway_id"] = gateway_id
     cfg["mqtt"]["host"] = endpoint
-    cfg["mqtt"]["client_id"] = gateway_id
+    cfg["mqtt"]["client_id"] = outputs["ThingName"]   # IoTポリシーで、モノの名前と同じclient IDだけ接続を許可している
+    cfg["mqtt"]["topic_prefix"] = outputs["TopicPrefix"]
     (GATEWAY_DIR / "gateway_config.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"[3/4] gateway/gateway_config.json を作成しました(エンドポイント: {endpoint})")
 
 
-def write_grafana_env(iam, region: str, grafana_user: str) -> None:
+def write_grafana_env(iam, region: str, outputs: dict) -> None:
     env_file = GRAFANA_DIR / ".env"
     if env_file.exists():
         print("[4/4] grafana/.env は作成済みのため再利用します")
         return
     print("[4/4] Grafana用アクセスキーを発行中…")
-    res = iam.create_access_key(UserName=grafana_user)["AccessKey"]
+    res = iam.create_access_key(UserName=outputs["GrafanaUserName"])["AccessKey"]
     GRAFANA_DIR.mkdir(parents=True, exist_ok=True)
     env_file.write_text(
-        "AWS_REGION={}\nAWS_ACCESS_KEY_ID={}\nAWS_SECRET_ACCESS_KEY={}\n".format(
-            region, res["AccessKeyId"], res["SecretAccessKey"]
-        ),
+        f"AWS_REGION={region}\n"
+        f"AWS_ACCESS_KEY_ID={res['AccessKeyId']}\n"
+        f"AWS_SECRET_ACCESS_KEY={res['SecretAccessKey']}\n"
+        # データソースの接続先(名前に owner が入るので、provisioning の YAML に直接書かずここで渡す)
+        f"ATHENA_WORKGROUP={outputs['AthenaWorkGroup']}\n"
+        f"ATHENA_DATABASE={outputs['GlueDatabaseName']}\n",
         encoding="utf-8",
     )
     print("      秘密鍵と同様に扱ってください。grafana/.env を他人に渡さないでください")
@@ -129,24 +142,28 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--region", default="ap-northeast-1")
     ap.add_argument("--profile", default=None)
-    ap.add_argument("--gateway-id", default="gw01")
+    ap.add_argument("--owner", default=None, help="自分を表す名前(英小文字・数字、16文字以内)。リソース名に入る")
+    ap.add_argument("--gateway-id", default="store01", help="店舗ゲートウェイのID")
     ap.add_argument("--email", default=None, help="アラーム通知を受け取るメールアドレス(ハンズオン4)")
     args = ap.parse_args()
+    owner = naming.resolve_owner(args.owner)
 
     session = boto3.Session(profile_name=args.profile, region_name=args.region)
     account = session.client("sts").get_caller_identity()["Account"]
-    print(f"AWSアカウント {account} / リージョン {args.region} に作成します")
+    print(f"AWSアカウント {account} / リージョン {args.region} に {naming.stack_name(owner)} を作成します")
 
-    outputs = deploy_stack(session.client("cloudformation"), args.gateway_id)
+    outputs = deploy_stack(session.client("cloudformation"), owner, args.gateway_id)
     iot = session.client("iot")
-    issue_certificate(iot, f"{args.gateway_id}-policy", args.gateway_id)
-    write_gateway_config(iot, args.gateway_id)
-    write_grafana_env(session.client("iam"), args.region, outputs["GrafanaUserName"])
+    issue_certificate(iot, outputs["PolicyName"], outputs["ThingName"])
+    write_gateway_config(iot, owner, args.gateway_id, outputs)
+    write_grafana_env(session.client("iam"), args.region, outputs)
     if args.email:
         subscribe_email(session.client("sns"), outputs["AlarmTopicArn"], args.email)
 
     print("\n完了。次は: python gateway/gateway.py")
-    print(f"データ保存先: s3://{outputs.get('BucketName')}/raw/   Athenaワークグループ: iot-lab")
+    print(f"MQTTトピック: {outputs.get('TopicPrefix')}/{args.gateway_id}/<機器>/telemetry")
+    print(f"データ保存先: s3://{outputs.get('BucketName')}/raw/")
+    print(f"Athena: ワークグループ {outputs.get('AthenaWorkGroup')} / データベース {outputs.get('GlueDatabaseName')}")
     print(f"最新値テーブル: {outputs.get('LatestTableName')}   確認: python aws/show_latest.py")
     print(f"Lambdaのログ: aws logs tail {outputs.get('LatestValueLogGroup')} --follow")
     print(f"通知Lambdaのログ: aws logs tail {outputs.get('AlarmNotifierLogGroup')} --follow")

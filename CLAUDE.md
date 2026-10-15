@@ -2,6 +2,7 @@
 
 IoT学習キット(`iot-lab/`)と、その手順書(`docs/`)のリポジトリ。
 
+- 題材はスーパー1店舗の設備(売場空調 AC-01・冷蔵ショーケース RC-01・電力計 PM-01・冷凍機盤 REF-01)。XCPチームが共用のAWSアカウントで検証する前提で、AWSの名前は `xcp-store-iot-<owner>-…`、MQTTトピックは `store-<owner>/…` にする(`iot-lab/aws/naming.py` と template.yaml)
 - `iot-lab/` は学習者に zip で配るキット本体。`tools/` と `.github/` はドキュメント保守用で、キットには含めない
 - 手順書は `docs/IoT学習ハンズオンN <テーマ>.md`。既存の手順書の文体(です・ます、表で整理、「やってみる」「よくあるつまずき」「次のステップ」)に合わせる
 - Lambda のコードは `iot-lab/aws/lambda/*.py` が正本。`setup_aws.py` が template.yaml の `# __CODE:<名前>__` の行に埋め込む(1ファイル4096文字まで)

@@ -67,11 +67,11 @@ UNIT_LABEL = {
 }
 
 # ---------------------------------------------------------------- 使用量モデル
-EQUIPMENT = 3            # 機器の台数(points.json)
+EQUIPMENT = 4            # 機器の台数(points.json: 空調・ショーケース・電力計・冷凍機盤)
 POLL_SEC = 10            # ゲートウェイの読み取り周期
 MSG_BYTES = 500          # テレメトリ1件のJSONの大きさ(S3の1ファイル)
 LOG_BYTES = 400          # Lambda 1回あたりのログ(START/END/REPORT+自分のprint)
-GRAFANA_PANELS = 5       # ダッシュボードのパネル数(1パネル=1クエリ)
+GRAFANA_PANELS = 6       # ダッシュボードのパネル数(1パネル=1クエリ)
 GRAFANA_REFRESH_SEC = 30 # ダッシュボードの自動更新間隔
 ATHENA_MIN_BYTES = 10 * 1024**2   # Athenaは1クエリ最低10MB分課金
 
@@ -162,8 +162,9 @@ def render_scenario(key: str, prices: dict) -> str:
 def render_grafana(prices: dict) -> str:
     per_hour = 3600 / GRAFANA_REFRESH_SEC * GRAFANA_PANELS
     out = ["| その日にたまったファイル数 | 目安 | 1時間開いたままにしたときの料金 |", "| --- | --- | --- |"]
-    for objs, note in [(1_000, "ゲートウェイを約1時間動かした"), (10_000, "約9時間動かした"),
-                       (25_920, "24時間動かした(1日分)")]:
+    for hours, note in [(1, "ゲートウェイを1時間動かした"), (8, "8時間動かした(店舗の半日)"),
+                        (24, "24時間動かした(1日分)")]:
+        objs = round(hours * 3600 / POLL_SEC * EQUIPMENT)
         usd = per_hour * (objs * prices["unit"]["s3_get_request"] + ATHENA_MIN_BYTES / 1024**4 * prices["unit"]["athena_scanned_tb"])
         out.append(f"| {objs:,} | {note} | {yen(usd)} |")
     return "\n".join(out)

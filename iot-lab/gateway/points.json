@@ -1,10 +1,13 @@
 {
-  "_comment": "ポイントリスト(タグ表)。protocol: modbus(省略時)/mc。address: Modbusはレジスタ番号、MCはデバイス名(D100, M0 など)。type: u16=符号なし16bit, s16=符号付き16bit, u32_lw/u32_hw=32bit整数(下位/上位ワード先), f32_lw/f32_hw=32bit浮動小数(下位/上位ワード先), bit=1ビット。writable: 遠隔操作で書き込んでよいポイントと、その値の範囲(書いていないポイントは読み取り専用)",
+  "_comment": "ポイントリスト(タグ表)。host/port: 機器ごとの接続先(シミュレータは機器ごとに別のポートで待ち受ける)。device_id: ModbusのデバイスID(ユニットID)。plctype: MCプロトコルのPLCの機種。protocol: modbus(省略時)/mc。address: Modbusはレジスタ番号、MCはデバイス名(D100, M0 など)。type: u16=符号なし16bit, s16=符号付き16bit, u32_lw/u32_hw=32bit整数(下位/上位ワード先), f32_lw/f32_hw=32bit浮動小数(下位/上位ワード先), bit=1ビット。writable: 遠隔操作で書き込んでよいポイントと、その値の範囲(書いていないポイントは読み取り専用)",
   "equipment": [
     {
-      "equipment_id": "AHU-01",
+      "equipment_id": "AC-01",
+      "name": "売場空調",
       "kind": "hvac",
       "protocol": "modbus",
+      "host": "127.0.0.1",
+      "port": 5021,
       "device_id": 1,
       "points": [
         {"name": "run_status", "address": 0, "type": "u16", "scale": 1, "unit": ""},
@@ -16,26 +19,50 @@
       ]
     },
     {
-      "equipment_id": "PLC-LINE1",
-      "kind": "plc",
+      "equipment_id": "RC-01",
+      "name": "冷蔵ショーケース(飲料・日配)",
+      "kind": "showcase",
       "protocol": "modbus",
-      "device_id": 2,
+      "host": "127.0.0.1",
+      "port": 5022,
+      "device_id": 1,
       "points": [
-        {"name": "production_count", "address": 100, "type": "u32_lw", "scale": 1, "unit": "pcs"},
-        {"name": "motor_current_a", "address": 102, "type": "f32_hw", "scale": 1, "unit": "A"},
-        {"name": "line_running", "address": 104, "type": "u16", "scale": 1, "unit": ""}
+        {"name": "run_status", "address": 0, "type": "u16", "scale": 1, "unit": ""},
+        {"name": "setpoint_c", "address": 1, "type": "s16", "scale": 0.1, "unit": "degC"},
+        {"name": "case_temp_c", "address": 2, "type": "s16", "scale": 0.1, "unit": "degC"},
+        {"name": "defrost", "address": 3, "type": "u16", "scale": 1, "unit": ""},
+        {"name": "door_open", "address": 4, "type": "u16", "scale": 1, "unit": ""},
+        {"name": "alarm_code", "address": 5, "type": "u16", "scale": 1, "unit": ""}
       ]
     },
     {
-      "equipment_id": "PLC-IQR1",
-      "kind": "plc",
-      "protocol": "mc",
+      "equipment_id": "PM-01",
+      "name": "電力計(店舗受電)",
+      "kind": "power_meter",
+      "protocol": "modbus",
+      "host": "127.0.0.1",
+      "port": 5023,
+      "device_id": 1,
       "points": [
-        {"name": "production_count", "address": "D100", "type": "u32_lw", "scale": 1, "unit": "pcs"},
-        {"name": "conveyor_speed_mpm", "address": "D102", "type": "u16", "scale": 0.1, "unit": "m/min"},
-        {"name": "motor_current_a", "address": "D104", "type": "f32_lw", "scale": 1, "unit": "A"},
+        {"name": "energy_kwh", "address": 0, "type": "u32_lw", "scale": 0.1, "unit": "kWh"},
+        {"name": "power_kw", "address": 2, "type": "f32_hw", "scale": 1, "unit": "kW"}
+      ]
+    },
+    {
+      "equipment_id": "REF-01",
+      "name": "冷凍機盤(バックヤード)",
+      "kind": "refrigerator",
+      "protocol": "mc",
+      "host": "127.0.0.1",
+      "port": 5010,
+      "plctype": "iQ-R",
+      "points": [
+        {"name": "compressor_starts", "address": "D100", "type": "u32_lw", "scale": 1, "unit": "回"},
+        {"name": "suction_pressure_mpa", "address": "D102", "type": "u16", "scale": 0.01, "unit": "MPa"},
+        {"name": "discharge_pressure_mpa", "address": "D103", "type": "u16", "scale": 0.01, "unit": "MPa"},
+        {"name": "freezer_temp_c", "address": "D104", "type": "f32_lw", "scale": 1, "unit": "degC"},
         {"name": "alarm_code", "address": "D110", "type": "u16", "scale": 1, "unit": ""},
-        {"name": "line_running", "address": "M0", "type": "bit", "scale": 1, "unit": ""},
+        {"name": "compressor_running", "address": "M0", "type": "bit", "scale": 1, "unit": ""},
         {"name": "alarm_active", "address": "M1", "type": "bit", "scale": 1, "unit": ""}
       ]
     }

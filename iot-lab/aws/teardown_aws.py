@@ -7,7 +7,10 @@ AWS 側の学習環境を削除するスクリプト(課金を止めたいとき
   4. CloudFormation スタックを削除
   5. ローカルの証明書・gateway_config.json・grafana/.env を削除
 
-実行: python aws/teardown_aws.py [--region ap-northeast-1] [--profile 名前]
+owner は gateway/gateway_config.json から読みます(無いときは --owner で指定)。
+旧版のキット(スタック名 iot-lab)の設定が残っている場合は、その旧スタックを削除します。
+
+実行: python aws/teardown_aws.py [--owner kojima] [--region ap-northeast-1] [--profile 名前]
 """
 import argparse
 import shutil
@@ -15,21 +18,29 @@ from pathlib import Path
 
 import boto3
 
+import naming
+
 ROOT = Path(__file__).resolve().parent.parent
 CERT_DIR = ROOT / "gateway" / "certs"
 GRAFANA_DIR = ROOT / "grafana"
-STACK_NAME = "iot-lab"
+LEGACY_STACK_NAME = "iot-lab"   # 店舗版より前のキットのスタック名
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--region", default="ap-northeast-1")
     ap.add_argument("--profile", default=None)
+    ap.add_argument("--owner", default=None, help="setup_aws.py で指定した owner(省略時は gateway_config.json から)")
     ap.add_argument("--yes", action="store_true", help="確認なしで削除")
     args = ap.parse_args()
 
+    if naming.CONFIG.exists() and naming.saved_owner() is None:
+        stack_name = LEGACY_STACK_NAME
+    else:
+        stack_name = naming.stack_name(naming.resolve_owner(args.owner))
+
     if not args.yes:
-        ans = input(f"スタック {STACK_NAME} と保存データをすべて削除します。よろしいですか? [y/N] ")
+        ans = input(f"スタック {stack_name} と保存データをすべて削除します。よろしいですか? [y/N] ")
         if ans.strip().lower() != "y":
             print("中止しました")
             return
@@ -40,7 +51,7 @@ def main() -> None:
 
     outputs = {}
     try:
-        stack = cfn.describe_stacks(StackName=STACK_NAME)["Stacks"][0]
+        stack = cfn.describe_stacks(StackName=stack_name)["Stacks"][0]
         outputs = {o["OutputKey"]: o["OutputValue"] for o in stack.get("Outputs", [])}
     except cfn.exceptions.ClientError:
         print("スタックは見つかりませんでした")
@@ -70,8 +81,8 @@ def main() -> None:
 
     if outputs:
         print("[4/5] スタックを削除中…(1〜3分)")
-        cfn.delete_stack(StackName=STACK_NAME)
-        cfn.get_waiter("stack_delete_complete").wait(StackName=STACK_NAME)
+        cfn.delete_stack(StackName=stack_name)
+        cfn.get_waiter("stack_delete_complete").wait(StackName=stack_name)
 
     print("[5/5] ローカルの証明書と設定を削除")
     shutil.rmtree(CERT_DIR, ignore_errors=True)

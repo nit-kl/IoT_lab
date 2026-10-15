@@ -1,5 +1,8 @@
 """
-三菱電機 MELSEC iQ-R を模擬する MCプロトコル(SLMP)サーバー(学習用)
+冷凍機盤 REF-01 の三菱電機 MELSEC iQ-R を模擬する MCプロトコル(SLMP)サーバー(学習用、ポート5010)
+
+  バックヤードの冷凍機盤 REF-01 のPLCのつもりです。冷凍機(コンデンシングユニット)で
+  冷凍ショーケースとウォークイン冷凍庫を冷やし、PLCが圧縮機の発停と異常を管理しています。
 
   通信形式 : 3Eフレーム / バイナリコード / TCP
   対応コマンド : 一括読出 0401(ワード単位・ビット単位)
@@ -9,20 +12,23 @@
 
 デバイス割り付け(PLCプログラマから受け取る「デバイス表」のつもりで見てください)
 --------------------------------------------------------------------
-  D100-D101 : 生産カウンタ     32bit整数(BIN32)。D100が下位ワード、D101が上位ワード
-  D102      : 搬送速度         ×10 (例 125 → 12.5 m/min)
-  D104-D105 : モータ電流       単精度実数(FLOAT32)。D104が下位ワード
-  D110      : 異常コード       0=正常
-  M0        : ライン稼働中     1=稼働
-  M1        : 異常発生中       1=異常
+  D100-D101 : 圧縮機の発停回数  32bit整数(BIN32)。D100が下位ワード、D101が上位ワード
+  D102      : 低圧(吸入圧力)    ×100 (例 15 → 0.15 MPa)
+  D103      : 高圧(吐出圧力)    ×100 (例 160 → 1.60 MPa)
+  D104-D105 : 冷凍庫温度        単精度実数(FLOAT32)。D104が下位ワード
+  D110      : 異常コード        0=正常
+  M0        : 圧縮機運転中      1=運転
+  M1        : 異常発生中        1=異常
 
-実行:  python mc_plc_simulator.py [--port 5010]
+  圧縮機は冷凍庫温度が -18℃ を超えると起動し、-22℃ まで下がると停止します(発停を繰り返す)。
+  発停が増えすぎるのは故障の前触れなので、発停回数は保守でよく見る値です。
+
+実行:  python simulator/refrigerator_plc.py [--port 5010] [--verbose]
 """
 import argparse
 import asyncio
 import random
 import struct
-import time
 
 # デバイスコード(バイナリ) → (デバイス名, 種類)
 DEVICE_CODES = {0xA8: ("D", "word"), 0xB4: ("W", "word"), 0x90: ("M", "bit")}
@@ -45,23 +51,27 @@ def f32_to_words_low_first(value: float) -> list[int]:
     return [lo, hi]
 
 
-async def run_line(mem: PlcMemory, interval: float) -> None:
-    """ラインの動きを模擬して、デバイスの値を更新し続ける"""
-    start = time.time()
-    count = 0
+async def run_refrigerator(mem: PlcMemory, interval: float) -> None:
+    """冷凍機の動きを模擬して、デバイスの値を更新し続ける"""
+    starts = 70000          # 設置からの累計。上位ワードが0にならない大きさにしておく
+    temp = -20.0
+    running = 1
     while True:
-        t = time.time() - start
-        running = 0 if (int(t) // 100) % 4 == 3 else 1          # 400秒のうち100秒は停止
+        if running and temp < -22.0:
+            running = 0
+        elif not running and temp > -18.0:
+            running = 1
+            starts += 1
+        temp += (-0.08 if running else 0.03) + random.uniform(-0.02, 0.02)
         alarm_code = 0 if random.random() > 0.01 else 3021      # 時々、異常コード3021
-        if running:
-            count += random.randint(1, 3)
-        speed = (12.5 + random.uniform(-0.3, 0.3)) if running else 0.0
-        current = (8.0 + random.uniform(-0.5, 0.5)) if running else 0.2
+        low = (0.15 if running else 0.35) + random.uniform(-0.02, 0.02)
+        high = (1.60 if running else 0.90) + random.uniform(-0.05, 0.05)
 
-        mem.D[100] = count & 0xFFFF
-        mem.D[101] = (count >> 16) & 0xFFFF
-        mem.D[102] = int(round(speed * 10))
-        mem.D[104:106] = f32_to_words_low_first(current)
+        mem.D[100] = starts & 0xFFFF
+        mem.D[101] = (starts >> 16) & 0xFFFF
+        mem.D[102] = int(round(low * 100))
+        mem.D[103] = int(round(high * 100))
+        mem.D[104:106] = f32_to_words_low_first(temp)
         mem.D[110] = alarm_code
         mem.M[0] = running
         mem.M[1] = 1 if alarm_code else 0
@@ -148,7 +158,7 @@ async def serve_client(reader, writer, mem: PlcMemory, verbose: bool) -> None:
 
 
 async def main() -> None:
-    ap = argparse.ArgumentParser(description="MELSEC iQ-R MCプロトコル(3E/バイナリ)シミュレータ")
+    ap = argparse.ArgumentParser(description="REF-01 冷凍機盤(MELSEC iQ-R、MCプロトコル 3E/バイナリ)シミュレータ")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=5010)
     ap.add_argument("--interval", type=float, default=1.0)
@@ -156,9 +166,9 @@ async def main() -> None:
     args = ap.parse_args()
 
     mem = PlcMemory()
-    asyncio.create_task(run_line(mem, args.interval))
+    asyncio.create_task(run_refrigerator(mem, args.interval))
     server = await asyncio.start_server(lambda r, w: serve_client(r, w, mem, args.verbose), args.host, args.port)
-    print(f"MCプロトコル シミュレータ起動: {args.host}:{args.port}(3Eフレーム/バイナリ/TCP)  Ctrl+Cで終了")
+    print(f"REF-01 冷凍機盤(MCプロトコル 3E/バイナリ/TCP)起動: {args.host}:{args.port}  Ctrl+Cで終了")
     async with server:
         await server.serve_forever()
 

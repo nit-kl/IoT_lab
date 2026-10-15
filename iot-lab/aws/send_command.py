@@ -1,12 +1,12 @@
 """
-クラウドからゲートウェイへ命令を送り、結果を待つスクリプト(ハンズオン5)
+本部(クラウド)から店舗ゲートウェイへ命令を送り、結果を待つスクリプト(ハンズオン5)
 
   1. 命令(command_id・宛先・値・期限・送った人)を作り、命令テーブルに「sent」として記録
-  2. MQTT トピック lab/<ゲートウェイ>/<機器>/cmd に QoS1 で送信
+  2. MQTT トピック store-<owner>/<店舗ゲートウェイ>/<機器>/cmd に QoS1 で送信
   3. ゲートウェイが返した結果(…/cmd_result)が IoTルール経由で命令テーブルに書かれるのを待って表示
 
 実行例:
-  python aws/send_command.py --value 24.5                 # AHU-01 の設定温度を 24.5℃ に
+  python aws/send_command.py --value 28.0                 # 売場空調 AC-01 の設定温度を 28.0℃ に
   python aws/send_command.py --value 35                   # 範囲外 → ゲートウェイが拒否
   python aws/send_command.py --value 24.0 --ttl -10       # 最初から期限切れ → 拒否
   python aws/send_command.py --value 24.0 --command-id test-1   # 同じIDで2回送ると、2回目は再実行されない
@@ -20,7 +20,8 @@ from decimal import Decimal
 
 import boto3
 
-STACK_NAME = "iot-lab"
+import naming
+
 
 
 def iso(dt: datetime) -> str:
@@ -29,21 +30,21 @@ def iso(dt: datetime) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="ゲートウェイに命令を送る")
-    ap.add_argument("--equipment", default="AHU-01")
+    ap.add_argument("--equipment", default="AC-01")
     ap.add_argument("--point", default="setpoint_c")
     ap.add_argument("--value", type=float, required=True)
     ap.add_argument("--ttl", type=int, default=60, help="命令の有効期限(秒)。これより遅れて届いたら実行されない")
     ap.add_argument("--command-id", default=None, help="省略時は自動採番。同じIDで送ると重複扱い")
-    ap.add_argument("--gateway-id", default="gw01")
-    ap.add_argument("--topic-prefix", default="lab")
+    ap.add_argument("--gateway-id", default="store01")
+    ap.add_argument("--owner", default=None, help="setup_aws.py で指定した owner(省略時は gateway_config.json から)")
     ap.add_argument("--wait", type=int, default=30, help="結果を待つ秒数")
     ap.add_argument("--region", default="ap-northeast-1")
     ap.add_argument("--profile", default=None)
     args = ap.parse_args()
 
     session = boto3.Session(profile_name=args.profile, region_name=args.region)
-    outputs = session.client("cloudformation").describe_stacks(StackName=STACK_NAME)["Stacks"][0]["Outputs"]
-    table_name = {o["OutputKey"]: o["OutputValue"] for o in outputs}.get("CommandTableName")
+    outputs = naming.stack_outputs(session, naming.resolve_owner(args.owner))
+    table_name = outputs.get("CommandTableName")
     if not table_name:
         raise SystemExit("命令テーブルがありません。先に python aws/setup_aws.py を実行してください")
     table = session.resource("dynamodb").Table(table_name)
@@ -60,7 +61,7 @@ def main() -> None:
         # 誰が操作したかを必ず残す(監査ログ)
         "issued_by": session.client("sts").get_caller_identity()["Arn"],
     }
-    topic = f"{args.topic_prefix}/{args.gateway_id}/{args.equipment}/cmd"
+    topic = f"{outputs['TopicPrefix']}/{args.gateway_id}/{args.equipment}/cmd"
 
     table.put_item(Item={**cmd, "equipment_id": args.equipment, "value": Decimal(str(args.value)), "status": "sent"})
     iot_data.publish(topic=topic, qos=1, payload=json.dumps(cmd))

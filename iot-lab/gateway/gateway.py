@@ -1,7 +1,8 @@
 """
-学習用 IoT ゲートウェイ
+学習用 IoT ゲートウェイ(店舗ゲートウェイ)
 
-  Modbus TCP(空調機など)や三菱電機MCプロトコル(iQ-R)で機器を定期的に読み取り
+  Modbus TCP(空調・ショーケース・電力計)や三菱電機MCプロトコル(冷凍機盤のiQ-R)で機器を定期的に読み取り
+    (接続先は機器ごとに points.json の host / port。1台が応答しなくても他の機器は読み続ける)
   → ポイントリスト(points.json)に従って生値を工学値に変換
   → JSON にして SQLite のバッファに積む(ストア&フォワード)
   → MQTT(AWS IoT Core なら TLS + X.509 証明書)で送信し、届いたらバッファから消す
@@ -60,10 +61,10 @@ def encode(raw: int, dtype: str) -> list[int]:
 
 
 class ModbusReader:
-    """Modbus TCP で読む(空調機・汎用機器)"""
+    """Modbus TCP で読む(空調・ショーケース・電力計など)"""
 
-    def __init__(self, cfg: dict):
-        self.client = ModbusTcpClient(cfg["host"], port=cfg["port"], timeout=3)
+    def __init__(self, conn: dict):
+        self.client = ModbusTcpClient(conn["host"], port=conn["port"], timeout=3)
 
     def read_words(self, eq: dict, p: dict, count: int) -> list[int]:
         if not self.client.connected:
@@ -90,17 +91,17 @@ class ModbusReader:
 class McReader:
     """三菱電機 MCプロトコル(3Eフレーム/バイナリ)で読む(MELSEC iQ-R など)"""
 
-    def __init__(self, cfg: dict):
+    def __init__(self, conn: dict):
         import pymcprotocol
-        self.cfg = cfg
-        self.client = pymcprotocol.Type3E(plctype=cfg.get("plctype", "iQ-R"))
+        self.conn = conn
+        self.client = pymcprotocol.Type3E(plctype=conn.get("plctype", "iQ-R"))
         self.client.setaccessopt(commtype="binary")
         self.client.soc_timeout = 3
         self.connected = False
 
     def _ensure(self) -> None:
         if not self.connected:
-            self.client.connect(self.cfg["host"], self.cfg["port"])
+            self.client.connect(self.conn["host"], self.conn["port"])
             self.connected = True
 
     def read_words(self, eq: dict, p: dict, count: int) -> list[int]:
@@ -139,6 +140,20 @@ def read_point(reader, eq: dict, p: dict, dump_raw: bool = False) -> float:
 def read_equipment(reader, eq: dict, dump_raw: bool) -> dict:
     """1台分のポイントを読み、{名前: 値} を返す。通信エラー時は例外"""
     return {p["name"]: read_point(reader, eq, p, dump_raw) for p in eq["points"]}
+
+
+def make_readers(equipment: list[dict]) -> dict:
+    """機器IDごとの読み取り口を作る。protocol(省略時は modbus)で読み方を切り替える。
+    同じ host:port の機器(1台のModbusゲートウェイの後ろにデバイスIDを変えて並ぶ機器など)は接続を共有する"""
+    conns, readers = {}, {}
+    for eq in equipment:
+        proto = eq.get("protocol", "modbus")
+        key = (proto, eq["host"], eq["port"])
+        if key not in conns:
+            conn = {k: eq[k] for k in ("host", "port", "plctype") if k in eq}
+            conns[key] = ModbusReader(conn) if proto == "modbus" else McReader(conn)
+        readers[eq["equipment_id"]] = conns[key]
+    return readers
 
 
 # --------------------------------------------------------------------------
@@ -197,7 +212,7 @@ class CommandLog:
 
 
 def write_point(cmd: dict, equipment: dict, readers: dict) -> dict:
-    # 1. 期限切れの命令は実行しない(回線の遅れで数分後に届いた「設定温度を下げろ」は、もう誰も望んでいないかもしれない)
+    # 1. 期限切れの命令は実行しない(回線の遅れで数分後に届いた「設定温度を上げろ」は、もう誰も望んでいないかもしれない)
     if datetime.fromisoformat(cmd["expires_at"].replace("Z", "+00:00")) < datetime.now(timezone.utc):
         raise Rejected("期限切れ")
     # 2. ポイントリストで writable と書かれたポイントだけ書ける(それ以外は読み取り専用)
@@ -213,7 +228,7 @@ def write_point(cmd: dict, equipment: dict, readers: dict) -> dict:
     if not limits["min"] <= value <= limits["max"]:
         raise Rejected(f"範囲外の値: {value}(許可 {limits['min']}〜{limits['max']})")
     # 4. 書く前の値を読み、書いて、読み返して確かめる
-    reader = readers[eq.get("protocol", "modbus")]
+    reader = readers[eq["equipment_id"]]
     before = read_point(reader, eq, p)
     scale = p.get("scale", 1)
     reader.write_word(eq, p, encode(round(value / scale), p["type"])[0])
@@ -235,7 +250,7 @@ def execute_command(cmd: dict, equipment: dict, readers: dict, done: CommandLog)
     except (KeyError, TypeError, ValueError, AttributeError) as e:   # 項目の不足・値の型違いなど(機器には書いていない)
         result.update(status="rejected", reason=f"命令の形式が不正: {e!r}")
     except Exception as e:   # 通信エラーなど
-        readers[equipment[cmd["equipment_id"]].get("protocol", "modbus")].reset()
+        readers[cmd["equipment_id"]].reset()
         result.update(status="failed", reason=str(e))
     done.save(cmd["command_id"], result)
     return result
@@ -248,7 +263,7 @@ def make_mqtt_client(cfg: dict, commands: queue.Queue):
     import paho.mqtt.client as mqtt
 
     m = cfg["mqtt"]
-    cmd_filter = f"{m.get('topic_prefix', 'lab')}/{cfg['gateway_id']}/+/cmd"
+    cmd_filter = f"{m.get('topic_prefix', 'store')}/{cfg['gateway_id']}/+/cmd"
     client = mqtt.Client(
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
         client_id=m["client_id"],
@@ -323,17 +338,10 @@ def main() -> None:
     points = json.loads(Path(args.points).read_text(encoding="utf-8"))
 
     gw_id = cfg["gateway_id"]
-    prefix = cfg.get("mqtt", {}).get("topic_prefix", "lab")
+    prefix = cfg.get("mqtt", {}).get("topic_prefix", "store")
     interval = cfg.get("poll_interval_sec", 10)
 
-    # 機器ごとの protocol に応じて読み取り方法を切り替える(省略時は modbus)
-    readers = {}
-    for eq in points["equipment"]:
-        proto = eq.get("protocol", "modbus")
-        if proto not in readers:
-            if proto not in cfg:
-                raise SystemExit(f"設定ファイルに {proto} の接続先がありません({eq['equipment_id']})")
-            readers[proto] = ModbusReader(cfg[proto]) if proto == "modbus" else McReader(cfg[proto])
+    readers = make_readers(points["equipment"])
     equipment = {eq["equipment_id"]: eq for eq in points["equipment"]}
     buf = Buffer(BASE_DIR / "buffer.db")
     done = CommandLog(buf.db)
@@ -347,7 +355,7 @@ def main() -> None:
         cycle_start = time.time()
         ts = datetime.now(timezone.utc)   # 時刻は必ずUTCで持つ
         for eq in points["equipment"]:
-            reader = readers[eq.get("protocol", "modbus")]
+            reader = readers[eq["equipment_id"]]
             seq += 1
             payload = {
                 "message_id": str(uuid.uuid4()),
