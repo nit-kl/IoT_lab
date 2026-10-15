@@ -4,6 +4,7 @@
   Modbus TCP(空調・ショーケース・電力計)や三菱電機MCプロトコル(冷凍機盤のiQ-R)で機器を定期的に読み取り
     (接続先は機器ごとに points.json の host / port。1台が応答しなくても他の機器は読み続ける)
   → ポイントリスト(points.json)に従って生値を工学値に変換
+  → 店舗のシステム(入店カウンタのAPI、POSのDB)からは前回の続きの差分を取る(sources.py、ハンズオン6)
   → JSON にして SQLite のバッファに積む(ストア&フォワード)
   → MQTT(AWS IoT Core なら TLS + X.509 証明書)で送信し、届いたらバッファから消す
   ← クラウドからの命令(…/cmd)を受け取り、安全確認をしてから機器に書き込み、結果(…/cmd_result)を返す
@@ -25,6 +26,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pymodbus.client import ModbusTcpClient
+
+from sources import load_sources
 
 log = logging.getLogger("gateway")
 BASE_DIR = Path(__file__).resolve().parent
@@ -165,16 +168,33 @@ class Buffer:
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS queue (id INTEGER PRIMARY KEY AUTOINCREMENT, topic TEXT, payload TEXT)"
         )
+        # 店舗のシステムから「どこまで取ったか」(ウォーターマーク)。ソースごとに1行
+        self.db.execute("CREATE TABLE IF NOT EXISTS watermarks (source_id TEXT PRIMARY KEY, value TEXT)")
         self.db.commit()
         self.max_rows = max_rows
 
-    def put(self, topic: str, payload: dict) -> None:
+    def _insert(self, topic: str, payload: dict) -> None:
         self.db.execute("INSERT INTO queue (topic, payload) VALUES (?, ?)", (topic, json.dumps(payload, ensure_ascii=False)))
         # 溢れたら古いものから捨てる(容量設計も実務では重要)
         self.db.execute(
             "DELETE FROM queue WHERE id <= (SELECT MAX(id) FROM queue) - ?", (self.max_rows,)
         )
+
+    def put(self, topic: str, payload: dict) -> None:
+        self._insert(topic, payload)
         self.db.commit()
+
+    def watermark(self, source_id: str):
+        row = self.db.execute("SELECT value FROM watermarks WHERE source_id = ?", (source_id,)).fetchone()
+        return row[0] if row else None
+
+    def put_with_watermark(self, messages: list[tuple[str, dict]], source_id: str, watermark: str) -> None:
+        """取ってきた差分をバッファに積み、ウォーターマークを進める。1つのトランザクションで行うので、
+        途中で落ちても「積んだのに印が進まない(=次に二重に取る)」「印だけ進む(=取りこぼす)」が起きない"""
+        with self.db:
+            for topic, payload in messages:
+                self._insert(topic, payload)
+            self.db.execute("INSERT OR REPLACE INTO watermarks VALUES (?, ?)", (source_id, watermark))
 
     def peek(self, n: int) -> list[tuple[int, str, str]]:
         return self.db.execute("SELECT id, topic, payload FROM queue ORDER BY id LIMIT ?", (n,)).fetchall()
@@ -324,6 +344,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="学習用IoTゲートウェイ")
     ap.add_argument("--config", default=str(BASE_DIR / "gateway_config.json"))
     ap.add_argument("--points", default=str(BASE_DIR / "points.json"))
+    ap.add_argument("--sources", default=str(BASE_DIR / "sources.json"), help="店舗のシステムの接続先(ハンズオン6)")
     ap.add_argument("--console", action="store_true", help="MQTT送信せず画面に表示する")
     ap.add_argument("--dump-raw", action="store_true", help="生のレジスタ値も表示する")
     ap.add_argument("--once", action="store_true", help="1回だけ読み取って終了")
@@ -342,6 +363,8 @@ def main() -> None:
     interval = cfg.get("poll_interval_sec", 10)
 
     readers = make_readers(points["equipment"])
+    sources = load_sources(Path(args.sources), gw_id)
+    console_marks: dict = {}   # --console のときはバッファを使わないので、ウォーターマークはメモリに持つ
     equipment = {eq["equipment_id"]: eq for eq in points["equipment"]}
     buf = Buffer(BASE_DIR / "buffer.db")
     done = CommandLog(buf.db)
@@ -349,8 +372,9 @@ def main() -> None:
     client = None if args.console else make_mqtt_client(cfg, commands)
     seq = int(time.time())  # 再起動しても増え続ける連番(重複・欠損チェック用)
 
-    log.info("開始: gateway=%s 機器=%d台 周期=%ss モード=%s",
-             gw_id, len(points["equipment"]), interval, "console" if args.console else "mqtt")
+    log.info("開始: gateway=%s 機器=%d台 店舗システム=%s 周期=%ss モード=%s",
+             gw_id, len(points["equipment"]), ",".join(s.source_id for s in sources) or "なし",
+             interval, "console" if args.console else "mqtt")
     while True:
         cycle_start = time.time()
         ts = datetime.now(timezone.utc)   # 時刻は必ずUTCで持つ
@@ -379,6 +403,24 @@ def main() -> None:
                 print(topic, json.dumps(payload, ensure_ascii=False))
             else:
                 buf.put(topic, payload)
+
+        # 店舗のシステムからは、前回の続きの差分を取る
+        for src in sources:
+            mark = console_marks.get(src.source_id) if args.console else buf.watermark(src.source_id)
+            try:
+                items, new_mark = src.poll(mark)
+            except Exception as e:   # 取れなかったら印を進めずに次の周期で取り直す
+                log.warning("%s %s", src.source_id, e)
+                continue
+            messages = [(f"{prefix}/{gw_id}/{src.source_id}/{kind}", p) for kind, p in items]
+            if args.console:
+                console_marks[src.source_id] = new_mark
+                if messages:
+                    print(f"{messages[-1][0]} {len(messages)}件(最後の1件: "
+                          f"{json.dumps(messages[-1][1], ensure_ascii=False)[:300]}…)")
+            else:
+                buf.put_with_watermark(messages, src.source_id, new_mark)
+            log.info("%s: %d件を取得(ウォーターマーク %s → %s)", src.source_id, len(messages), mark, new_mark)
 
         if not args.console:
             sent = flush(client, buf)

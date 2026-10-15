@@ -4,3 +4,4 @@ gateway/buffer.db
 grafana/.env
 __pycache__/
 .venv/
+simulator/data/

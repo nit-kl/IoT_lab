@@ -86,3 +86,95 @@ WHERE dt = date_format(current_date, '%Y-%m-%d')
   AND equipment_id = 'REF-01' AND status = 'ok'
 GROUP BY 1
 ORDER BY 1;
+
+-- ============================================================ ここから店舗のシステム(ハンズオン6)
+-- 入店カウンタは people_count、POS は pos_transactions テーブルです。
+-- 店舗の数字は「日本時間の1日(営業日)」で見ます。dt はAWSが受け取った日(UTC)なので、
+-- dt を前日と当日の2日分にしてから、時刻を日本時間に直して「今日」に絞ります。
+-- (日本時間の0時〜9時は、UTCでは前日になるため)
+
+-- 10. 1時間ごとの来店客数(入店数)
+--     同じ1分の集計が2回届くことがある(QoS1の重複、取り直し)ので、センサーと時刻で重複を除いてから足す
+SELECT date_format(date_trunc('hour', at_timezone(from_iso8601_timestamp(ts), 'Asia/Tokyo')), '%m/%d %H:00') AS hour_jst,
+       sum(in_count) AS visitors, sum(out_count) AS exits
+FROM (
+  SELECT DISTINCT sensor_id, ts, in_count, out_count
+  FROM people_count
+  WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d'))
+    AND date(at_timezone(from_iso8601_timestamp(ts), 'Asia/Tokyo')) = date(at_timezone(current_timestamp, 'Asia/Tokyo'))
+)
+GROUP BY 1
+ORDER BY 1;
+
+-- 11. 1時間ごとの売上・客数・客単価
+--     取引は「店舗コード+取引番号」で1件にしてから集計する(重複を除く)
+--     取消(VOID)は金額がマイナスなので、足せば打ち消される。客数は 売上の件数 − 取消の件数
+WITH txn AS (
+  SELECT * FROM (
+    SELECT *, row_number() OVER (PARTITION BY store_code, txn_id ORDER BY received_at_ms) AS rn
+    FROM pos_transactions
+    WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d'))
+      AND date(at_timezone(from_iso8601_timestamp(ts), 'Asia/Tokyo')) = date(at_timezone(current_timestamp, 'Asia/Tokyo'))
+  ) WHERE rn = 1
+)
+SELECT date_format(date_trunc('hour', at_timezone(from_iso8601_timestamp(ts), 'Asia/Tokyo')), '%m/%d %H:00') AS hour_jst,
+       sum(total_yen) AS sales_yen,
+       count_if(txn_type = 'SALE') - count_if(txn_type = 'VOID') AS customers,
+       round(sum(total_yen) * 1.0 / nullif(count_if(txn_type = 'SALE') - count_if(txn_type = 'VOID'), 0)) AS yen_per_customer
+FROM txn
+GROUP BY 1
+ORDER BY 1;
+
+-- 12. 買上率(会計した客数 ÷ 来店客数):来店したお客様のうち、何割が買って帰ったか
+--     入店カウンタとPOSという別々のシステムのデータを、時刻(日本時間の1時間)で突き合わせる
+WITH visit AS (
+  SELECT date_trunc('hour', at_timezone(from_iso8601_timestamp(ts), 'Asia/Tokyo')) AS h, sum(in_count) AS visitors
+  FROM (SELECT DISTINCT sensor_id, ts, in_count FROM people_count
+        WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d')))
+  GROUP BY 1
+), sale AS (
+  SELECT date_trunc('hour', at_timezone(from_iso8601_timestamp(ts), 'Asia/Tokyo')) AS h,
+         count(DISTINCT CASE WHEN txn_type = 'SALE' THEN txn_id END)
+           - count(DISTINCT CASE WHEN txn_type = 'VOID' THEN txn_id END) AS customers
+  FROM pos_transactions
+  WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d'))
+  GROUP BY 1
+)
+SELECT date_format(v.h, '%m/%d %H:00') AS hour_jst, v.visitors, s.customers,
+       round(100.0 * s.customers / nullif(v.visitors, 0), 1) AS buy_rate_pct
+FROM visit v LEFT JOIN sale s ON v.h = s.h
+WHERE date(v.h) = date(at_timezone(current_timestamp, 'Asia/Tokyo'))
+ORDER BY v.h;
+
+-- 13. 売れ筋(今日の商品別の売上 上位10)。明細(items)は配列なので UNNEST で1行ずつに展開する
+WITH txn AS (
+  SELECT * FROM (
+    SELECT *, row_number() OVER (PARTITION BY store_code, txn_id ORDER BY received_at_ms) AS rn
+    FROM pos_transactions
+    WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d'))
+      AND date(at_timezone(from_iso8601_timestamp(ts), 'Asia/Tokyo')) = date(at_timezone(current_timestamp, 'Asia/Tokyo'))
+  ) WHERE rn = 1
+)
+SELECT i.category, i.jan, i.product_name, sum(i.qty) AS qty, sum(i.amount_yen) AS sales_yen
+FROM txn CROSS JOIN UNNEST(items) AS t(i)
+GROUP BY 1, 2, 3
+ORDER BY sales_yen DESC
+LIMIT 10;
+
+-- 14. レジごとの「会計してからAWSに届くまで」の時間。セルフレジ(4番)は店舗サーバーにまとめて書くので遅い
+SELECT register_no, count(*) AS txns,
+       round(avg((received_at_ms - to_unixtime(from_iso8601_timestamp(ts)) * 1000) / 1000.0)) AS avg_delay_sec,
+       round(max((received_at_ms - to_unixtime(from_iso8601_timestamp(ts)) * 1000) / 1000.0)) AS max_delay_sec
+FROM pos_transactions
+WHERE dt = date_format(current_date, '%Y-%m-%d')
+GROUP BY register_no
+ORDER BY register_no;
+
+-- 15. 取りこぼしチェック:取引番号(連番)の欠番を探す。0件なら、店舗サーバーの取引はすべて届いている
+SELECT prev_txn_id, txn_id, txn_id - prev_txn_id - 1 AS missing
+FROM (
+  SELECT txn_id, lag(txn_id) OVER (ORDER BY txn_id) AS prev_txn_id
+  FROM (SELECT DISTINCT txn_id FROM pos_transactions
+        WHERE dt IN (date_format(current_date - interval '1' day, '%Y-%m-%d'), date_format(current_date, '%Y-%m-%d')))
+)
+WHERE txn_id - prev_txn_id > 1;

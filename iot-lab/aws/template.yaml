@@ -88,6 +88,8 @@ Resources:
                 Action: s3:PutObject
                 Resource:
                   - !Sub '${DataBucket.Arn}/raw/*'
+                  - !Sub '${DataBucket.Arn}/people/*'
+                  - !Sub '${DataBucket.Arn}/pos/*'
                   - !Sub '${DataBucket.Arn}/errors/*'
 
   TelemetryToS3Rule:
@@ -209,10 +211,13 @@ Resources:
               - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog'
               - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${GlueDatabase}'
               - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${GlueDatabase}/*'
-          # Read the raw telemetry data ...
+          # Read the raw telemetry and store-system data ...
           - Effect: Allow
             Action: s3:GetObject
-            Resource: !Sub '${DataBucket.Arn}/raw/*'
+            Resource:
+              - !Sub '${DataBucket.Arn}/raw/*'
+              - !Sub '${DataBucket.Arn}/people/*'
+              - !Sub '${DataBucket.Arn}/pos/*'
           # ... and read/write Athena's own query result cache (separate from the IoT rule's write path)
           - Effect: Allow
             Action:
@@ -229,7 +234,7 @@ Resources:
             Resource: !GetAtt DataBucket.Arn
             Condition:
               StringLike:
-                s3:prefix: ['raw/*', 'athena-results/*']
+                s3:prefix: ['raw/*', 'people/*', 'pos/*', 'athena-results/*']
 
   # ---------------------------------------------------------------- latest value (Lambda -> DynamoDB)
   # S3 keeps the history; this table keeps only the current state, one item per equipment.
@@ -512,6 +517,132 @@ Resources:
             BucketName: !Ref DataBucket
             RoleArn: !GetAtt RuleRole.Arn
             Key: 'errors/cmd-${newuuid()}.json'
+
+  # ---------------------------------------------------------------- store systems (people counter API, POS DB)
+  # Not equipment: the gateway pulls only what is new since last time (watermark) and sends one message per
+  # 1-minute count / per POS transaction. Same pattern as telemetry: one rule per kind -> S3 -> Glue table.
+
+  PeopleCountToS3Rule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: !Sub 'xcp_store_iot_${Owner}_people_count_to_s3'
+      TopicRulePayload:
+        Description: Store people counter bins (1 minute) in S3
+        AwsIotSqlVersion: '2016-03-23'
+        RuleDisabled: false
+        Sql: !Sub "SELECT *, timestamp() AS received_at_ms FROM 'store-${Owner}/+/+/people_count'"
+        Actions:
+          - S3:
+              BucketName: !Ref DataBucket
+              RoleArn: !GetAtt RuleRole.Arn
+              Key: 'people/dt=${parse_time("yyyy-MM-dd", timestamp())}/${topic(3)}-${timestamp()}-${newuuid()}.json'
+        ErrorAction:
+          S3:
+            BucketName: !Ref DataBucket
+            RoleArn: !GetAtt RuleRole.Arn
+            Key: 'errors/people-${newuuid()}.json'
+
+  PeopleCountTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: people_count
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: json
+          projection.enabled: 'true'
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: 2026-01-01,NOW
+          projection.dt.interval: '1'
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub 's3://${DataBucket}/people/dt=${!dt}/'
+        PartitionKeys:
+          - {Name: dt, Type: string}
+        StorageDescriptor:
+          Location: !Sub 's3://${DataBucket}/people/'
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+            Parameters:
+              ignore.malformed.json: 'true'
+          Columns:
+            - {Name: message_id, Type: string}
+            - {Name: gateway_id, Type: string}
+            - {Name: source_id, Type: string}
+            - {Name: kind, Type: string}
+            - {Name: ts, Type: string}
+            - {Name: sensor_id, Type: string}
+            - {Name: bin_end, Type: string}
+            - {Name: in_count, Type: int}
+            - {Name: out_count, Type: int}
+            - {Name: received_at_ms, Type: bigint}
+
+  PosTxnToS3Rule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: !Sub 'xcp_store_iot_${Owner}_pos_txn_to_s3'
+      TopicRulePayload:
+        Description: Store POS transactions (one per message) in S3
+        AwsIotSqlVersion: '2016-03-23'
+        RuleDisabled: false
+        Sql: !Sub "SELECT *, timestamp() AS received_at_ms FROM 'store-${Owner}/+/+/pos_txn'"
+        Actions:
+          - S3:
+              BucketName: !Ref DataBucket
+              RoleArn: !GetAtt RuleRole.Arn
+              Key: 'pos/dt=${parse_time("yyyy-MM-dd", timestamp())}/${topic(3)}-${timestamp()}-${newuuid()}.json'
+        ErrorAction:
+          S3:
+            BucketName: !Ref DataBucket
+            RoleArn: !GetAtt RuleRole.Arn
+            Key: 'errors/pos-${newuuid()}.json'
+
+  PosTransactionTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: pos_transactions
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: json
+          projection.enabled: 'true'
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: 2026-01-01,NOW
+          projection.dt.interval: '1'
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub 's3://${DataBucket}/pos/dt=${!dt}/'
+        PartitionKeys:
+          - {Name: dt, Type: string}
+        StorageDescriptor:
+          Location: !Sub 's3://${DataBucket}/pos/'
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+            Parameters:
+              ignore.malformed.json: 'true'
+          Columns:
+            - {Name: message_id, Type: string}
+            - {Name: gateway_id, Type: string}
+            - {Name: source_id, Type: string}
+            - {Name: kind, Type: string}
+            - {Name: ts, Type: string}
+            - {Name: store_code, Type: string}
+            - {Name: txn_id, Type: bigint}
+            - {Name: register_no, Type: int}
+            - {Name: txn_type, Type: string}
+            - {Name: ref_txn_id, Type: bigint}
+            - {Name: total_yen, Type: bigint}
+            - {Name: item_count, Type: int}
+            - {Name: items, Type: 'array<struct<jan:string,product_name:string,category:string,qty:int,unit_price_yen:int,amount_yen:int>>'}
+            - {Name: received_at_ms, Type: bigint}
 
 Outputs:
   BucketName:

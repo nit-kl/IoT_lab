@@ -74,6 +74,9 @@ LOG_BYTES = 400          # Lambda 1回あたりのログ(START/END/REPORT+自分
 GRAFANA_PANELS = 6       # ダッシュボードのパネル数(1パネル=1クエリ)
 GRAFANA_REFRESH_SEC = 30 # ダッシュボードの自動更新間隔
 ATHENA_MIN_BYTES = 10 * 1024**2   # Athenaは1クエリ最低10MB分課金
+PEOPLE_PER_HOUR = 60     # 入店カウンタの集計(1分1件)
+POS_TXN_PER_HOUR = 100   # POSの取引(simulator/store_model.py の来店モデルで1日約2,400件)
+POS_MSG_BYTES = 1200     # POSの取引1件のJSON(明細つき)
 
 SCENARIOS = {
     "study": dict(title="学習(ゲートウェイを3時間動かす)", hours=3, athena_queries=20, grafana_hours=1,
@@ -86,6 +89,8 @@ SCENARIOS = {
 def usage(s: dict) -> list[tuple[str, str, str, float]]:
     """(ハンズオン, 内訳, 単価キー, 数量) の一覧"""
     n = s["hours"] * 3600 / POLL_SEC * EQUIPMENT           # テレメトリの件数
+    n6 = s["hours"] * (PEOPLE_PER_HOUR + POS_TXN_PER_HOUR)  # 店舗システムのメッセージ件数(ハンズオン6)
+    objects6_today = min(n6, 24 * (PEOPLE_PER_HOUR + POS_TXN_PER_HOUR)) / 2
     minutes = s["hours"] * 60
     objects_today = min(n, 24 * 3600 / POLL_SEC * EQUIPMENT) / 2   # その日のパーティションの平均ファイル数
     grafana_queries = s["grafana_hours"] * 3600 / GRAFANA_REFRESH_SEC * GRAFANA_PANELS
@@ -122,6 +127,15 @@ def usage(s: dict) -> list[tuple[str, str, str, float]]:
         ("5", "結果記録ルールのDynamoDBアクション", "iot_action_executed", s["commands"]),
         ("5", "命令テーブルへの書き込み(送信時+結果)", "ddb_write_request_unit", s["commands"] * 2),
         ("5", "結果待ちの読み取り(1秒ごと、約5回)", "ddb_read_request_unit", s["commands"] * 5),
+        ("6", "入店カウンタ・POSのMQTTメッセージ", "iot_message", n6),
+        ("6", "入店・POSルールの起動", "iot_rule_triggered", n6),
+        ("6", "入店・POSルールのS3アクション", "iot_action_executed", n6),
+        ("6", "S3 PUT(1集計・1取引1ファイル)", "s3_put_request", n6),
+        ("6", "S3 保存容量", "s3_storage_gb_month",
+         s["hours"] * (PEOPLE_PER_HOUR * MSG_BYTES + POS_TXN_PER_HOUR * POS_MSG_BYTES) / gb * (s["hours"] / 720) / 2),
+        ("6", "Athena 手動クエリのGET(前日+当日の全ファイル)", "s3_get_request", s["athena_queries"] * objects6_today * 2),
+        ("6", "Athena 手動クエリのスキャン量", "athena_scanned_tb", s["athena_queries"] * ATHENA_MIN_BYTES / 1024**4),
+        ("6", "Glueデータカタログの参照", "glue_catalog_request", s["athena_queries"] * 2),
     ]
 
 
