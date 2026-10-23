@@ -1,7 +1,0 @@
-gateway/certs/
-gateway/gateway_config.json
-gateway/buffer.db
-grafana/.env
-__pycache__/
-.venv/
-simulator/data/
