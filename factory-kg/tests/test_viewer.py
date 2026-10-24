@@ -184,7 +184,8 @@ class ViewerQueriesTest(unittest.TestCase):
         self.assertIn("s4inma:belongsToCategory", predicates)
         self.assertIn("xf:equipmentId", predicates)
         graphs = {r[4] for r in rows}
-        self.assertEqual(graphs, {"https://xcp-factory.example/graph/instances"})
+        self.assertIn("xf:placement", predicates)  # 配置は layout.ttl（別の名前付きグラフ）
+        self.assertEqual(graphs, {"https://xcp-factory.example/graph/instances", "https://xcp-factory.example/graph/layout"})
 
 
 if __name__ == "__main__":

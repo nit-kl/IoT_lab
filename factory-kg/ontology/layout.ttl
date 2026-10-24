@@ -1,0 +1,42 @@
+# サンプル工場の配置（3D 表示用、手書き）。座標系・語の意味は xf.ttl の「配置」を参照。
+# 設備の IRI は tools/generate_ttl.py が作るインスタンスと同じ。設備を増やしたらここにも配置を書く
+# （書かないと SHACL の警告になり、3D では空いている場所に仮に並ぶ）。
+#
+#  y
+#  16 ┌──────────────── 製造エリア（30m × 16m）────────────────┐
+#     │  LINE-A                                                  │
+#  10 │  [PRESS-01] → [CONV-01 ══════════] → [CNC-01]            │
+#     │ ═════════ 安全通路 ═══════════════════════════════════   │
+#   4 │                         (ENV-01)                         │
+#   2 │ [COMP-01]                                                │
+#   0 └──────────────────────────────────────────────────────────┘ x
+#     0                                                          30
+
+@prefix xf:   <https://xcp-factory.example/def#> .
+@prefix id:   <https://xcp-factory.example/id/> .
+
+id:area\/production xf:placement [ a xf:Placement ;
+    xf:x 15.0 ; xf:y 8.0 ; xf:width 30.0 ; xf:depth 16.0 ; xf:height 7.0 ] .
+
+id:line\/LINE-A xf:placement [ a xf:Placement ;
+    xf:x 14.5 ; xf:y 10.0 ; xf:width 25.0 ; xf:depth 4.0 ; xf:height 0.0 ] .
+
+# プレス機: ラインの先頭（材料の打ち抜き）
+id:equipment\/PRESS-01 xf:placement [ a xf:Placement ;
+    xf:x 5.0 ; xf:y 10.0 ; xf:width 2.6 ; xf:depth 2.2 ; xf:height 3.4 ] .
+
+# 搬送コンベア: プレス機から CNC 加工機へ（ベルトは x 方向に流れる）
+id:equipment\/CONV-01 xf:placement [ a xf:Placement ;
+    xf:x 13.25 ; xf:y 10.0 ; xf:width 9.0 ; xf:depth 1.1 ; xf:height 1.0 ] .
+
+# CNC 加工機: ラインの最後
+id:equipment\/CNC-01 xf:placement [ a xf:Placement ;
+    xf:x 22.5 ; xf:y 10.0 ; xf:width 3.2 ; xf:depth 2.4 ; xf:height 2.5 ] .
+
+# エアコンプレッサ: 南の壁際（工場全体に圧縮空気を送る）
+id:equipment\/COMP-01 xf:placement [ a xf:Placement ;
+    xf:x 3.5 ; xf:y 2.0 ; xf:width 2.4 ; xf:depth 1.4 ; xf:height 1.8 ] .
+
+# 環境センサ: エリア中央の柱に取り付け
+id:equipment\/ENV-01 xf:placement [ a xf:Placement ;
+    xf:x 16.0 ; xf:y 4.0 ; xf:width 0.4 ; xf:depth 0.4 ; xf:height 2.2 ] .

@@ -97,13 +97,13 @@ class DemoBackend:
 
     mode = "demo"
 
-    def __init__(self, speed=60.0):
+    def __init__(self, speed=60.0, start_offset_minutes=6 * 60):
         store, _ = kgquery.open_store(EXAMPLE_INSTANCES)
         body = store.dump(format=RdfFormat.N_QUADS)
         self.store = store
         cache = graphstore.GraphCache("demo", "kg/current.nq", 3600,
                                       fetch=lambda etag: None if etag == '"demo"' else (body, '"demo"', "demo"))
-        self.replay = DemoReplay(speed=speed)
+        self.replay = DemoReplay(speed=speed, start_offset_minutes=start_offset_minutes)
         self.domain = Domain(cache, self.replay)
         import api  # factory-kg の REST のルーティング（dispatch）を、この domain で使う
         api.domain = self.domain

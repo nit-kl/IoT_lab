@@ -20,18 +20,21 @@ SH = Namespace("http://www.w3.org/ns/shacl#")
 
 
 def run(instances=None):
-    """(適合したか, 違反の一覧 [(対象, メッセージ)], 読み込んだトリプル数, 読み込んだファイル) を返す。"""
+    """(適合したか, 違反の一覧 [(対象, メッセージ)], 読み込んだトリプル数, 読み込んだファイル, 警告の一覧) を返す。
+
+    警告（sh:Warning。例: 設備の配置がない）は一覧に出すが、適合の判定には含めない。
+    """
     files = graph_files(instances)
     data = load_union(files)
     shapes = Graph().parse(SHAPES, format="turtle")
-    conforms, report, _ = validate(data, shacl_graph=shapes, inference="none", advanced=True, allow_warnings=False)
-    problems = []
-    for result in report.subjects(SH.resultSeverity, None):
+    conforms, report, _ = validate(data, shacl_graph=shapes, inference="none", advanced=True, allow_warnings=True)
+    problems, warnings = [], []
+    for result, severity in report.subject_objects(SH.resultSeverity):
         focus = report.value(result, SH.focusNode)
         message = report.value(result, SH.resultMessage)
         label = data.value(focus, RDFS.label) if focus is not None else None
-        problems.append((str(label or focus), str(message)))
-    return conforms, sorted(set(problems)), len(data), files
+        (warnings if severity == SH.Warning else problems).append((str(label or focus), str(message)))
+    return conforms, sorted(set(problems)), len(data), files, sorted(set(warnings))
 
 
 def main():
@@ -39,9 +42,11 @@ def main():
     ap.add_argument("--instances", type=Path, help="検証するインスタンスの TTL（既定 build/instances.ttl）")
     args = ap.parse_args()
 
-    conforms, problems, triples, files = run(args.instances)
+    conforms, problems, triples, files, warnings = run(args.instances)
     for path in files:
         print(f"  読み込み: {path.relative_to(path.parents[1])}" if path.exists() else f"  （なし）: {path.name}")
+    for focus, message in warnings:
+        print(f"  警告: {focus}: {message}")
     if conforms:
         print(f"SHACL 検証: 適合（{triples} トリプル）")
         return

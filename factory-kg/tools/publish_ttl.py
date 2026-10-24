@@ -63,7 +63,7 @@ def main():
     if not args.instances.exists():
         raise SystemExit(f"{args.instances} がありません。先に python tools/generate_ttl.py を実行してください")
 
-    conforms, problems, _, _ = validate.run(args.instances)
+    conforms, problems, *_ = validate.run(args.instances)
     if not conforms:
         print(f"SHACL 検証で違反が {len(problems)} 件あるため公開しません:", file=sys.stderr)
         for focus, message in problems:

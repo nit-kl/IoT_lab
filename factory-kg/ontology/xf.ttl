@@ -12,6 +12,7 @@
 @prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
 @prefix sosa:    <http://www.w3.org/ns/sosa/> .
 @prefix s4inma:  <https://saref.etsi.org/saref4inma/> .
+@prefix geo:     <http://www.opengis.net/ont/geosparql#> .
 
 <https://xcp-factory.example/def#>
     a owl:Ontology ;
@@ -86,3 +87,63 @@ xf:valueCodeList
     rdfs:comment "値がコード（例: 0=停止）である計測項目の、コードの意味を定めたコード表。各コードの skos:notation が API の value と一致する。"@ja ;
     rdfs:domain sosa:ObservableProperty ;
     rdfs:range skos:ConceptScheme .
+
+# ---------- 配置（3D 表示用） ----------
+# 座標系: 工場の床の南西の角を原点とし、x は東向き、y は北向き、高さは床から上向き（すべてメートル）。
+# 位置は配置する物の床面の中心。向きは真上から見て反時計回りの角度（度）。0 のとき幅が x 方向、奥行きが y 方向。
+
+xf:Placement
+    a owl:Class ;
+    rdfs:subClassOf geo:Geometry ;
+    rdfs:label "配置"@ja , "placement"@en ;
+    rdfs:comment "エリア・ライン・設備の、工場の床の上での位置・大きさ・向き（3D 表示用の簡単な形状）。"@ja .
+
+xf:placement
+    a owl:ObjectProperty ;
+    rdfs:subPropertyOf geo:hasGeometry ;
+    rdfs:label "配置"@ja , "placement"@en ;
+    rdfs:comment "この物の配置。設備（s4inma:ProductionEquipment・saref:Device）やエリア・ラインに付ける。"@ja ;
+    rdfs:domain geo:SpatialObject ;
+    rdfs:range xf:Placement .
+
+xf:x
+    a owl:DatatypeProperty ;
+    rdfs:label "x 座標（m）"@ja , "x (m)"@en ;
+    rdfs:comment "床面の中心の東向きの座標（メートル）。"@ja ;
+    rdfs:domain xf:Placement ;
+    rdfs:range xsd:decimal .
+
+xf:y
+    a owl:DatatypeProperty ;
+    rdfs:label "y 座標（m）"@ja , "y (m)"@en ;
+    rdfs:comment "床面の中心の北向きの座標（メートル）。"@ja ;
+    rdfs:domain xf:Placement ;
+    rdfs:range xsd:decimal .
+
+xf:width
+    a owl:DatatypeProperty ;
+    rdfs:label "幅（m）"@ja , "width (m)"@en ;
+    rdfs:comment "向きが 0 のときの x 方向の大きさ（メートル）。"@ja ;
+    rdfs:domain xf:Placement ;
+    rdfs:range xsd:decimal .
+
+xf:depth
+    a owl:DatatypeProperty ;
+    rdfs:label "奥行き（m）"@ja , "depth (m)"@en ;
+    rdfs:comment "向きが 0 のときの y 方向の大きさ（メートル）。"@ja ;
+    rdfs:domain xf:Placement ;
+    rdfs:range xsd:decimal .
+
+xf:height
+    a owl:DatatypeProperty ;
+    rdfs:label "高さ（m）"@ja , "height (m)"@en ;
+    rdfs:comment "床からの高さ（メートル）。エリアでは天井の高さ。"@ja ;
+    rdfs:domain xf:Placement ;
+    rdfs:range xsd:decimal .
+
+xf:rotation
+    a owl:DatatypeProperty ;
+    rdfs:label "向き（度）"@ja , "rotation (degrees)"@en ;
+    rdfs:comment "真上から見て反時計回りの角度（度）。省略時は 0。"@ja ;
+    rdfs:domain xf:Placement ;
+    rdfs:range xsd:decimal .

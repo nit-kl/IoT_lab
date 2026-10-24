@@ -1,14 +1,16 @@
 import { Box, Network, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { AgentDock } from "./agent/AgentDock";
 import { getConfig, setPrefixes } from "./api";
 import { DetailPanel } from "./components/DetailPanel";
 import { Header } from "./components/Header";
 import { SparqlConsole } from "./components/SparqlConsole";
-import { Factory3DPlaceholder } from "./factory3d/Factory3DPlaceholder";
 import { useVisibleInterval } from "./hooks";
 import { KnowledgeGraph } from "./kg/KnowledgeGraph";
 import { useApp, type Tab } from "./store";
+
+// 3D のライブラリは大きいので、② を開いたときに読み込む
+const Factory3D = lazy(() => import("./factory3d/Factory3D"));
 
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
   { key: "graph", label: "① ナレッジグラフ", icon: <Network size={15} /> },
@@ -44,12 +46,15 @@ export function App() {
       })
       .then(() => {
         // #q=CNC-01（設備）や #q=CNC-01/spindle_load（計測項目）のように開くと、それを選んだ状態で始める
-        const q = new URLSearchParams(location.hash.slice(1)).get("q") ?? "";
+        // #tab=3d で ② 3D 工場から始める（#tab=3d&q=CNC-01 のように組み合わせられる）
+        const hash = new URLSearchParams(location.hash.slice(1));
+        if (hash.get("tab") === "3d") setTab("factory3d");
+        const q = hash.get("q") ?? "";
         const m = /^([A-Za-z0-9_-]+)(?:\/([A-Za-z0-9_-]+))?$/.exec(q);
         if (m?.[1]) select(m[2] ? { kind: "property", equipment: m[1], metric: m[2] } : { kind: "equipment", id: m[1] });
       })
       .catch((e: Error) => setError(`起動に失敗しました: ${e.message}`));
-  }, [setConfig, refresh, setError, select]);
+  }, [setConfig, refresh, setError, select, setTab]);
 
   // 値は画面を表示している間だけ 1 分ごとに取り直す（replay の DB を起こし続けないため）
   useVisibleInterval(() => void refresh(false), 60_000, autoRefresh);
@@ -85,7 +90,9 @@ export function App() {
                   <SparqlConsole />
                 </div>
               ) : (
-                <Factory3DPlaceholder />
+                <Suspense fallback={<div className="grid flex-1 place-items-center text-sm text-slate-500">3D を準備中…</div>}>
+                  <Factory3D />
+                </Suspense>
               )}
             </div>
           </section>

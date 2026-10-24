@@ -9,6 +9,7 @@
 @prefix dcat:   <http://www.w3.org/ns/dcat#> .
 @prefix hydra:  <http://www.w3.org/ns/hydra/core#> .
 @prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+@prefix geo:    <http://www.opengis.net/ont/geosparql#> .
 
 s4inma:Factory                     rdfs:label "工場"@ja .
 s4inma:Site                        rdfs:label "サイト"@ja .
@@ -28,5 +29,8 @@ qudt:Unit                          rdfs:label "単位"@ja .
 dcat:DataService                   rdfs:label "データサービス"@ja .
 dcat:endpointURL                   rdfs:label "エンドポイント URL"@ja .
 hydra:IriTemplate                  rdfs:label "URL テンプレート"@ja .
+geo:SpatialObject                  rdfs:label "空間上のもの"@ja .
+geo:Geometry                       rdfs:label "形状"@ja .
+geo:hasGeometry                    rdfs:label "形状を持つ"@ja .
 skos:ConceptScheme                 rdfs:label "コード表"@ja .
 skos:Concept                       rdfs:label "コード"@ja .

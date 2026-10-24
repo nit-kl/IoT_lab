@@ -65,6 +65,15 @@ class DemoReplayTest(unittest.TestCase):
         _, page2 = self.replay(f"https://x/readings?equipment=CNC-01&metric=spindle_load&limit=50&next={page1['next']}")
         self.assertGreater(page2["items"][0]["seq"], page1["items"][-1]["seq"])
 
+    def test_start_offset(self):
+        # --demo-start 14:25 にあたる。CNC-01 は 14:30 から異常停止（2）
+        replay = DemoReplay(speed=60, start_offset_minutes=14 * 60 + 25, clock=self.clock)
+        _, body = replay("https://x/latest?equipment=CNC-01&metric=status")
+        self.assertEqual(body["items"][0]["source_ts"][11:16], "14:25")
+        self.clock.t += 6  # CSV 上の 6 分後
+        _, body = replay("https://x/latest?equipment=CNC-01&metric=status")
+        self.assertEqual(body["items"][0]["value"], 2)
+
     def test_unknown_path(self):
         status, _ = self.replay("https://x/reset")
         self.assertEqual(status, 404)
@@ -124,6 +133,13 @@ class AppServerTest(unittest.TestCase):
         status, body = self.request("GET", "/api/rest?path=/v1/equipment/CNC-01/properties/spindle_load", headers=HEADER)
         self.assertEqual(status, 200)
         self.assertEqual(body["metric"], "spindle_load")
+
+    def test_layout_in_factory(self):
+        # 3D 工場の配置（factory-kg の layout.ttl）が /v1/factory に入っている
+        status, body = self.request("GET", "/api/rest?path=/v1/factory", headers=HEADER)
+        line = body["factories"][0]["children"][0]["children"][0]["children"][0]
+        self.assertEqual(line["layout"]["width"], 25.0)
+        self.assertTrue(all("layout" in e for e in line["children"]))
 
     def test_rest_rejects_bad_paths(self):
         for path in ("/v2/factory", "/v1/../admin", "/v1/factory?x", "", "https://evil.example/v1/factory"):

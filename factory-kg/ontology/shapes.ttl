@@ -78,7 +78,29 @@ xfs:EquipmentShape
         [ sh:path ssn:hasProperty ; sh:minCount 1 ; sh:class sosa:ObservableProperty ;
           sh:message "設備は計測項目を 1 つ以上持つ" ] ,
         [ sh:path [ sh:inversePath saref:consistsOf ] ; sh:minCount 1 ; sh:maxCount 1 ; sh:class s4inma:WorkCenter ;
-          sh:message "設備はちょうど 1 つのラインに属する" ] .
+          sh:message "設備はちょうど 1 つのラインに属する" ] ,
+        # 配置がなくてもグラフとしては使えるので警告にとどめる（3D では空いている場所に仮に並ぶ）
+        [ sh:path xf:placement ; sh:minCount 1 ; sh:severity sh:Warning ;
+          sh:message "設備の配置（layout.ttl の xf:placement）がない" ] ,
+        [ sh:path xf:placement ; sh:maxCount 1 ; sh:message "設備の配置（xf:placement）は 1 つまで" ] .
+
+# ---------- 配置（3D 表示用） ----------
+
+xfs:PlacementShape
+    a sh:NodeShape ;
+    sh:targetObjectsOf xf:placement ;
+    sh:class xf:Placement ;
+    sh:property
+        [ sh:path xf:x ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ; sh:message "x 座標（xf:x、メートル）が 1 つ必要" ] ,
+        [ sh:path xf:y ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ; sh:message "y 座標（xf:y、メートル）が 1 つ必要" ] ,
+        [ sh:path xf:width ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ; sh:minExclusive 0 ;
+          sh:message "幅（xf:width、0 より大きいメートル）が 1 つ必要" ] ,
+        [ sh:path xf:depth ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ; sh:minExclusive 0 ;
+          sh:message "奥行き（xf:depth、0 より大きいメートル）が 1 つ必要" ] ,
+        [ sh:path xf:height ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ; sh:minInclusive 0 ;
+          sh:message "高さ（xf:height、0 以上のメートル）が 1 つ必要" ] ,
+        [ sh:path xf:rotation ; sh:maxCount 1 ; sh:datatype xsd:decimal ; sh:minInclusive -360 ; sh:maxInclusive 360 ;
+          sh:message "向き（xf:rotation）は -360〜360 度" ] .
 
 # ---------- 計測項目 ----------
 

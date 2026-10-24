@@ -64,6 +64,12 @@ SELECT ?service ?base ?latestTemplate ?readingsTemplate WHERE {
   ?service a dcat:DataService ; dcat:endpointURL ?base ;
            xf:latestTemplate/hydra:template ?latestTemplate ; xf:readingsTemplate/hydra:template ?readingsTemplate .
 }"""
+Q_LAYOUT = """
+SELECT ?node ?x ?y ?width ?depth ?height ?rotation WHERE {
+  ?node xf:placement ?p .
+  ?p xf:x ?x ; xf:y ?y ; xf:width ?width ; xf:depth ?depth ; xf:height ?height .
+  OPTIONAL { ?p xf:rotation ?rotation }
+}"""
 Q_CODES = """
 SELECT ?scheme ?schemeLabel ?notation ?label ?definition WHERE {
   ?scheme a skos:ConceptScheme .
@@ -152,6 +158,11 @@ class Model:
                     "code_list": r["codes"]}
             e["properties"][r["metric"]] = prop
             self.properties[prop["iri"]] = prop
+        # 配置（3D 表示用、メートル・度）。グラフに無い物は返さない（画面側で空いている場所に並べる）
+        for r in rows(store, Q_LAYOUT):
+            if r["node"] in self.nodes:
+                self.nodes[r["node"]]["layout"] = {k: float(r[k]) for k in ("x", "y", "width", "depth", "height")} | {
+                    "rotation": float(r["rotation"] or 0)}
         for e in self.equipment.values():
             line = self.nodes.get(e.get("parent"))
             e["line"] = line["id"] if line and line["kind"] == "line" else None
@@ -273,6 +284,8 @@ class Domain:
 
         def build(node):
             out = {"kind": node["kind"], "id": node.get("id"), "@id": node["iri"], "label": node.get("label")}
+            if "layout" in node:
+                out["layout"] = node["layout"]
             if node["kind"] == "equipment":
                 e = model.equipment[node["id"]]
                 out.update(category=e["category"]["label"] if e["category"] else None, metrics=sorted(e["properties"]))

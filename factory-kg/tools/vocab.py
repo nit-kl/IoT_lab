@@ -19,7 +19,8 @@ from rdflib.namespace import OWL, RDF, RDFS
 
 from kgcommon import CACHE_DIR, EXAMPLE_INSTANCES, INSTANCES, ONTOLOGY_DIR, PREFIXES, QUDT, SHAPES, UNIT, VOCABULARIES
 
-HAND_WRITTEN = [ONTOLOGY_DIR / "xf.ttl", ONTOLOGY_DIR / "codes.ttl", ONTOLOGY_DIR / "labels-ja.ttl", SHAPES]
+HAND_WRITTEN = [ONTOLOGY_DIR / "xf.ttl", ONTOLOGY_DIR / "codes.ttl", ONTOLOGY_DIR / "labels-ja.ttl", ONTOLOGY_DIR / "layout.ttl",
+                SHAPES]
 IMPORTS = ONTOLOGY_DIR / "imports.ttl"
 UNITS = ONTOLOGY_DIR / "units.ttl"
 EXTENSIONS = {"turtle": "ttl", "json-ld": "jsonld", "xml": "rdf"}

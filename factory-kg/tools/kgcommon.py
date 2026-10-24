@@ -30,10 +30,11 @@ HYDRA = Namespace("http://www.w3.org/ns/hydra/core#")
 SKOS = Namespace("http://www.w3.org/2004/02/skos/core#")
 PROV = Namespace("http://www.w3.org/ns/prov#")
 DCTERMS = Namespace("http://purl.org/dc/terms/")
+GEO = Namespace("http://www.opengis.net/ont/geosparql#")
 
 PREFIXES = {
     "xf": XF, "id": ID, "sosa": SOSA, "ssn": SSN, "saref": SAREF, "s4inma": S4INMA, "qudt": QUDT, "unit": UNIT,
-    "dcat": DCAT, "hydra": HYDRA, "skos": SKOS, "prov": PROV, "dcterms": DCTERMS,
+    "dcat": DCAT, "hydra": HYDRA, "skos": SKOS, "prov": PROV, "dcterms": DCTERMS, "geo": GEO,
 }
 
 # 参照する標準語彙: 接頭辞 → (名前空間, 公式の取得先, 形式)。vocab.py が取得して IRI の実在を検査する
@@ -49,18 +50,22 @@ VOCABULARIES = {
     "skos": (str(SKOS), "http://www.w3.org/2004/02/skos/core.rdf", "xml"),
     "prov": (str(PROV), "https://www.w3.org/ns/prov.ttl", "turtle"),
     "dcterms": (str(DCTERMS), "https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_terms.ttl", "turtle"),
+    # GeoSPARQL は名前空間の URL で語彙を返さないので、OGC の公式スキーマ（1.0）を取得する
+    "geo": (str(GEO), "https://schemas.opengis.net/geosparql/1.0/geosparql_vocab_all.rdf", "xml"),
 }
 
 # 名前付きグラフ: ファイル → グラフ IRI。出どころ（手書き・標準からの抜粋・生成）を区別する
 GRAPH_ONTOLOGY = BASE + "graph/ontology"
 GRAPH_IMPORTS = BASE + "graph/imports"
 GRAPH_INSTANCES = BASE + "graph/instances"
+GRAPH_LAYOUT = BASE + "graph/layout"
 ONTOLOGY_FILES = {
     ONTOLOGY_DIR / "xf.ttl": GRAPH_ONTOLOGY,
     ONTOLOGY_DIR / "codes.ttl": GRAPH_ONTOLOGY,
     ONTOLOGY_DIR / "labels-ja.ttl": GRAPH_ONTOLOGY,
     ONTOLOGY_DIR / "imports.ttl": GRAPH_IMPORTS,
     ONTOLOGY_DIR / "units.ttl": GRAPH_IMPORTS,
+    ONTOLOGY_DIR / "layout.ttl": GRAPH_LAYOUT,
 }
 
 

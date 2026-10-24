@@ -94,6 +94,11 @@ class DomainTest(unittest.TestCase):
         line = area["children"][0]
         self.assertEqual((tree[0]["label"], site["kind"], area["label"], line["id"]), ("サンプル工場", "site", "製造エリア", "LINE-A"))
         self.assertEqual([c["id"] for c in line["children"]], ["CNC-01", "COMP-01", "CONV-01", "ENV-01", "PRESS-01"])
+        # 配置（layout.ttl）: エリア・ライン・設備に付き、工場・サイトには無い
+        self.assertNotIn("layout", tree[0])
+        self.assertEqual(area["layout"]["width"], 30.0)
+        self.assertEqual(line["children"][0]["layout"],
+                         {"x": 22.5, "y": 10.0, "width": 3.2, "depth": 2.4, "height": 2.5, "rotation": 0.0})
         self.assertEqual(self.replay.calls, [])  # 構造だけなので replay は呼ばない
 
     def test_list_equipment_with_status(self):

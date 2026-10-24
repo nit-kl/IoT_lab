@@ -11,8 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import RDF
+from rdflib import BNode, Graph, Literal, URIRef
+from rdflib.namespace import RDF, XSD
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
@@ -41,7 +41,7 @@ class KgTestCase(unittest.TestCase):
         return path
 
     def violations(self, g):
-        conforms, problems, _, _ = validate.run(self.write(g))
+        conforms, problems, *_ = validate.run(self.write(g))
         return conforms, [m for _, m in problems]
 
     def assertViolation(self, g, fragment):
@@ -140,6 +140,31 @@ class ShapesTest(KgTestCase):
         g.remove((eq, RDF.type, SAREF.Device))
         conforms, _ = self.violations(g)
         self.assertFalse(conforms)
+
+    def test_missing_placement_is_warning(self):
+        # layout.ttl はサンプルの 5 設備だけ。3 ライン（15 設備）では残りが警告になるが、適合のまま
+        csv_path = Path(self.tmp.name) / "3lines.csv"
+        subprocess.run([sys.executable, str(ROOT.parent / "factory-replay" / "tools" / "generate_csv.py"),
+                        "--lines", "3", "--interval", "30m", "--out", str(csv_path)], check=True, capture_output=True)
+        g = generate_ttl.build_graph(generate_ttl.rows_from_csv(csv_path), API, "test")
+        conforms, problems, _, _, warnings = validate.run(self.write(g))
+        self.assertTrue(conforms, problems)
+        self.assertEqual(len(warnings), 10)
+        self.assertTrue(all("配置" in m for _, m in warnings), warnings)
+        _, _, _, _, sample_warnings = validate.run(self.write(sample_graph()))
+        self.assertEqual(sample_warnings, [])
+
+    def test_bad_placement(self):
+        g = sample_graph()
+        placement = BNode()
+        g.add((ID["equipment/CNC-01"], XF.placement, placement))  # layout.ttl の配置に加えて 2 つ目
+        g.add((placement, RDF.type, XF.Placement))
+        for p, v in ((XF.x, "1.0"), (XF.y, "1.0"), (XF.width, "-2.0"), (XF.depth, "1.0"), (XF.height, "1.0")):
+            g.add((placement, p, Literal(v, datatype=XSD.decimal)))
+        conforms, messages = self.violations(g)
+        self.assertFalse(conforms)
+        self.assertTrue(any("1 つまで" in m for m in messages), messages)
+        self.assertTrue(any("幅" in m for m in messages), messages)
 
 
 class QueryTest(KgTestCase):

@@ -29,6 +29,7 @@ interface AppState {
   loadStructure(): Promise<void>;
   refreshValues(): Promise<void>;
   loadDetail(id: string, force?: boolean): Promise<EquipmentDetail | undefined>;
+  loadAllDetails(): Promise<void>;
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -63,16 +64,23 @@ export const useApp = create<AppState>((set, get) => ({
     set({ tree: tree.factories });
   },
 
-  /** 値（稼働状態・最新値・replay の状態）を取り直す（1 分ごと・更新ボタン） */
+  /** 値（稼働状態・最新値・replay の状態）を取り直す（1 分ごと・更新ボタン）。
+   *  詳細は、選んでいる設備と（② を表示中なら）全設備の分だけ取り直し、揃ってから入れ替える（表示がちらつかないように） */
   refreshValues: async () => {
     const [equipment, status] = await Promise.all([
       rest<{ items: EquipmentSummary[] }>("/v1/equipment"),
       rest<AppStatus>("/v1/status"),
     ]);
-    set({ equipment: equipment.items, status, refreshedAt: Date.now(), details: {} });
-    const sel = get().selection;
-    const id = sel?.kind === "equipment" ? sel.id : sel?.kind === "property" ? sel.equipment : null;
-    if (id) await get().loadDetail(id, true);
+    const { selection: sel, tab } = get();
+    const ids = new Set(tab === "factory3d" ? equipment.items.map((e) => e.id) : []);
+    const selected = sel?.kind === "equipment" ? sel.id : sel?.kind === "property" ? sel.equipment : null;
+    if (selected) ids.add(selected);
+    const loaded = await Promise.all(
+      [...ids].map((id) => rest<EquipmentDetail>(`/v1/equipment/${encodeURIComponent(id)}`).catch(() => undefined)),
+    );
+    const details: Record<string, EquipmentDetail> = {};
+    for (const d of loaded) if (d) details[d.id] = d;
+    set({ equipment: equipment.items, status, refreshedAt: Date.now(), details });
   },
 
   loadDetail: async (id, force = false) => {
@@ -81,6 +89,16 @@ export const useApp = create<AppState>((set, get) => ({
     const detail = await rest<EquipmentDetail>(`/v1/equipment/${encodeURIComponent(id)}`);
     set((s) => ({ details: { ...s.details, [id]: detail } }));
     return detail;
+  },
+
+  /** ② 用に、まだ読んでいない設備の詳細（全計測項目の最新値）をまとめて読む */
+  loadAllDetails: async () => {
+    const { equipment, details } = get();
+    const missing = equipment.map((e) => e.id).filter((id) => !details[id]);
+    const loaded = await Promise.all(
+      missing.map((id) => rest<EquipmentDetail>(`/v1/equipment/${encodeURIComponent(id)}`).catch(() => undefined)),
+    );
+    set((s) => ({ details: { ...s.details, ...Object.fromEntries(loaded.filter((d) => d).map((d) => [d!.id, d!])) } }));
   },
 }));
 

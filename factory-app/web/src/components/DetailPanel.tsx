@@ -1,4 +1,4 @@
-import { ChevronRight, ExternalLink, Gauge, Layers, Link2 } from "lucide-react";
+import { ChevronRight, ExternalLink, Gauge, Layers, Link2, Move3d } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { rest, sparql } from "../api";
 import { formatTime, formatValue, shorten } from "../format";
@@ -8,7 +8,7 @@ import type { EquipmentDetail, Property, Readings, Selection, TreeNode } from ".
 import { StatusBadge } from "./StatusBadge";
 import { TimeSeriesChart } from "./TimeSeriesChart";
 
-const GRAPH_NAMES: Record<string, string> = { ontology: "スキーマ", imports: "標準語彙の抜粋", instances: "インスタンス" };
+const GRAPH_NAMES: Record<string, string> = { ontology: "スキーマ", imports: "標準語彙の抜粋", instances: "インスタンス", layout: "配置" };
 const KIND_LABELS: Record<string, string> = { factory: "工場", site: "サイト", area: "エリア", line: "ライン（ワークセンタ）", equipment: "設備" };
 const RANGES = [
   { key: "day", label: "CSV の 1 日" },
@@ -95,7 +95,7 @@ function Header({ kind, title, sub, badge }: { kind: string; title: string; sub?
 }
 
 function EquipmentView({ id }: { id: string }) {
-  const { details, loadDetail, select, equipment, refreshedAt } = useApp();
+  const { details, loadDetail, select, equipment, refreshedAt, tree } = useApp();
   const [error, setError] = useState<string | null>(null);
   const detail: EquipmentDetail | undefined = details[id];
   useEffect(() => {
@@ -132,6 +132,7 @@ function EquipmentView({ id }: { id: string }) {
           </p>
         )}
       </section>
+      <Placement layout={findNode(tree, detail["@id"])?.layout} />
       <Relations iri={detail["@id"]} />
     </div>
   );
@@ -271,6 +272,8 @@ function Relations({ iri }: { iri: string }) {
         const seen = new Set<string>();
         setRows(
           rows
+            // 空白ノード（配置の中身など）は IRI で辿れないので出さない（配置は設備の詳細に別に出す）
+            .filter((r) => r.o?.type !== "bnode")
             .map((r) => ({ p: r.p?.value ?? "", pLabel: r.pLabel?.value, o: r.o?.value ?? "", oLabel: r.oLabel?.value, graph: r.graph?.value ?? "" }))
             .filter((r) => !seen.has(`${r.p}|${r.o}`) && seen.add(`${r.p}|${r.o}`)),
         );
@@ -312,3 +315,20 @@ function Relations({ iri }: { iri: string }) {
   );
 }
 
+/** 配置（グラフの xf:placement。② 3D 工場の位置・大きさ） */
+function Placement({ layout }: { layout?: TreeNode["layout"] }) {
+  const n = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(Math.round(v * 100) / 100));
+  return (
+    <section>
+      <div className="panel-title mb-1 flex items-center gap-1"><Move3d size={12} /> 配置（② 3D 工場）</div>
+      {layout ? (
+        <p className="font-mono text-xs text-slate-600 dark:text-slate-300">
+          位置 x {n(layout.x)} m・y {n(layout.y)} m ／ 大きさ {n(layout.width)} × {n(layout.depth)} × 高さ {n(layout.height)} m
+          {layout.rotation ? ` ／ 向き ${n(layout.rotation)}°` : ""}
+        </p>
+      ) : (
+        <p className="text-xs text-amber-600 dark:text-amber-300">グラフに配置（layout.ttl の xf:placement）がありません。3D では仮の位置に並びます。</p>
+      )}
+    </section>
+  );
+}

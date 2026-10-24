@@ -153,6 +153,8 @@ def main():
     ap.add_argument("--region", default="ap-northeast-1")
     ap.add_argument("--demo", action="store_true", help="AWS を使わないデモモード")
     ap.add_argument("--demo-speed", type=float, default=60.0, help="デモの再生速度（既定 60 倍）")
+    ap.add_argument("--demo-start", default="06:00", metavar="HH:MM",
+                    help="デモを CSV 上のどの時刻から再生するか（既定 06:00。異常停止を見るなら 14:25 など）")
     ap.add_argument("--port", type=int, default=8770)
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
@@ -163,7 +165,10 @@ def main():
     if args.demo:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from demo import DemoBackend
-        backend = DemoBackend(speed=args.demo_speed)
+        m = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", args.demo_start)
+        if not m:
+            ap.error("--demo-start は HH:MM で指定してください（例: 14:25）")
+        backend = DemoBackend(speed=args.demo_speed, start_offset_minutes=int(m[1]) * 60 + int(m[2]))
     else:
         backend = AwsBackend(args.owner, args.region)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(backend, args.port))

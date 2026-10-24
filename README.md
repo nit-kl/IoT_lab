@@ -6,7 +6,7 @@
 |---|---|---|---|
 | [factory-replay](factory-replay/) | 工場ラインのサンプル CSV を S3 に置くと Aurora に少しずつ反映され、HTTP API で取得・リセットできる | [実現方針](factory-replay/docs/実現方針.md) | [作業手順](factory-replay/docs/作業手順.md) |
 | [factory-kg](factory-kg/) | replay の工場データを標準オントロジー（SOSA/SSN・SAREF4INMA・QUDT・DCAT/Hydra・SKOS）でナレッジグラフにし、各計測項目から replay の API を参照する。SPARQL・ローカルビューア・REST API（F/E アプリ向け）・MCP（AI エージェント向け）で使える | [実現方針](factory-kg/docs/実現方針.md) | [作業手順](factory-kg/docs/作業手順.md) |
-| [factory-app](factory-app/) | 3 つの画面を持つローカルアプリ（TypeScript）: ① ナレッジグラフ ② データ連動の 3D 工場（作成中） ③ MCP を使う AI エージェント（Bedrock・費用の上限つき、作成中）。AWS なしのデモモードあり | [実現方針](factory-app/docs/実現方針.md) | [作業手順](factory-app/docs/作業手順.md) |
+| [factory-app](factory-app/) | 3 つの画面を持つローカルアプリ（TypeScript）: ① ナレッジグラフ ② データ連動の 3D 工場 ③ MCP を使う AI エージェント（Bedrock・費用の上限つき、作成中）。AWS なしのデモモードあり | [実現方針](factory-app/docs/実現方針.md) | [作業手順](factory-app/docs/作業手順.md) |
 
 ```mermaid
 flowchart LR

@@ -57,6 +57,16 @@ export interface EquipmentDetail extends EquipmentSummary {
   properties: Property[];
 }
 
+/** 配置（グラフの xf:placement）。床の南西の角が原点、x は東・y は北・高さは上（メートル）、向きは反時計回り（度） */
+export interface Layout {
+  x: number;
+  y: number;
+  width: number;
+  depth: number;
+  height: number;
+  rotation: number;
+}
+
 export interface TreeNode {
   kind: "factory" | "site" | "area" | "line" | "equipment";
   id: string | null;
@@ -65,6 +75,7 @@ export interface TreeNode {
   category?: string;
   metrics?: string[];
   children?: TreeNode[];
+  layout?: Layout;
 }
 
 export interface Reading {
