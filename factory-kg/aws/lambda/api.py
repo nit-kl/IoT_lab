@@ -73,21 +73,25 @@ def respond(code, body):
             "body": json.dumps(body, ensure_ascii=False)}
 
 
-def handler(event, context):
-    method = event["requestContext"]["http"]["method"]
-    path = event.get("rawPath", "/").rstrip("/") or "/"
-    if method != "GET":
-        return respond(405, {"error": "GET だけを受け付けます（読み取り専用）"})
-    query = event.get("queryStringParameters") or {}
+def dispatch(path, query=None):
+    """REST の 1 要求を処理して (ステータス, 応答) を返す。HTTP を介さずに呼べる
+    （Lambda の handler と、将来同じ Lambda で動かすリモート MCP の両方から使う）。"""
+    path = path.rstrip("/") or "/"
     for pattern, route in ROUTES:
         match = pattern.match(path)
         if match:
             try:
-                return respond(200, route(query, *match.groups()))
+                return 200, route(query or {}, *match.groups())
             except NotFound as e:
-                return respond(404, {"error": str(e)})
+                return 404, {"error": str(e)}
             except BadRequest as e:
-                return respond(400, {"error": str(e)})
+                return 400, {"error": str(e)}
             except NotPublished:
-                return respond(503, {"error": "グラフが未公開です。publish_ttl.py を実行してください"})
-    return respond(404, {"error": f"{path} はありません", "openapi": "aws/openapi.yaml を参照"})
+                return 503, {"error": "グラフが未公開です。publish_ttl.py を実行してください"}
+    return 404, {"error": f"{path} はありません", "openapi": "aws/openapi.yaml を参照"}
+
+
+def handler(event, context):
+    if event["requestContext"]["http"]["method"] != "GET":
+        return respond(405, {"error": "GET だけを受け付けます（読み取り専用）"})
+    return respond(*dispatch(event.get("rawPath", "/"), event.get("queryStringParameters")))

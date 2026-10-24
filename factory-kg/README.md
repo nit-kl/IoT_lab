@@ -7,7 +7,7 @@
 - 確認手順: [docs/作業手順.md](docs/作業手順.md)
 - 標準語彙の使い分け: [ontology/README.md](ontology/README.md)
 
-状況: ステップ 1〜4（オントロジーと TTL・SPARQL エンドポイント・ローカルビューア・仕上げ）完了。今後の拡張の候補は [docs/実現方針.md](docs/実現方針.md) の 10 章。
+状況: ステップ 1〜6（オントロジーと TTL・SPARQL エンドポイント・ローカルビューア・仕上げ・REST API・MCP）完了。今後の拡張の候補は [docs/実現方針.md](docs/実現方針.md) の 10 章。
 
 ## クイックスタート（ローカル、AWS 不要）
 
@@ -67,6 +67,18 @@ F/E アプリや MCP サーバー向けの窓口。SPARQL を見せずに、構�
 
 コード値は意味を添えて返し（`{"value": 2, "label": "異常停止"}`）、replay が無いときも構造は返す（値は `{"unavailable": "理由"}`）。
 
+## MCP（AI エージェントから使う）
+
+```powershell
+claude mcp add factory-kg -- "$PWD\.venv\Scripts\python.exe" "$PWD\tools\kg_mcp.py" --owner <owner>   # Claude Code に登録
+python tools/kg_mcp.py --owner <owner> --http --port 8766    # Streamable HTTP で試す（リモート化と同じ方式）
+```
+
+REST API を呼ぶだけの薄い MCP サーバー（各自の PC で動き、aws login の認証情報で署名）。ツールは `list_lines`・`list_equipment`・`get_equipment`・
+`get_property`・`get_readings`（既定は要約）・`search`・`get_status`・`sparql_query`（補助、`--no-sparql` で無効）、
+リソースは `factory-kg://ontology`（標準オントロジーの使い分けと今の設備一覧）・`factory-kg://codes`。すべて読み取り専用。
+ツールの中身は `tools/kgmcp_tools.py` にまとめてあり、リモート（api Lambda で Streamable HTTP）でも同じものを使える設計。
+
 ## ローカルビューア
 
 ```powershell
@@ -97,6 +109,8 @@ factory-kg/
 │   ├── bench_load.py    グラフの大きさごとの読み込み時間を測る（ローカル / Lambda）
 │   ├── kg_viewer.py     ローカルビューアのサーバー（画面の配信と、署名付きの中継）
 │   ├── rest.py          REST API を呼ぶ CLI
+│   ├── kg_mcp.py        MCP サーバー（ローカル。stdio / Streamable HTTP）
+│   ├── kgmcp_tools.py   MCP のツール・リソースの定義（ローカル・リモート共通）
 │   ├── kgapi.py         SigV4 署名付きの呼び出し
 │   └── kgcommon.py      名前空間・ファイル・名前付きグラフの共通定義
 ├── aws/                 CloudFormation（template.yaml）、setup / teardown、openapi.yaml（REST API の仕様）、
