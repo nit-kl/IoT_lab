@@ -1,0 +1,2 @@
+# [crt] は `aws login` の認証情報を boto3 から使うために必要
+boto3[crt]>=1.35

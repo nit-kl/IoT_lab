@@ -1,0 +1,4 @@
+# 大きいデータは各自ローカルで生成する（generate_csv.py）
+data/*.large.csv
+__pycache__/
+.venv/
