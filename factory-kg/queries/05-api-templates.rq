@@ -1,0 +1,11 @@
+# replay の API（データサービス）と URL テンプレート・変数
+SELECT ?service ?endpointURL ?template ?variable ?required ?mapsTo WHERE {
+  ?s a dcat:DataService ; rdfs:label ?service ; dcat:endpointURL ?endpointURL .
+  { ?s xf:latestTemplate ?t } UNION { ?s xf:readingsTemplate ?t }
+  ?t hydra:template ?template ; hydra:mapping ?m .
+  ?m hydra:variable ?variable .
+  OPTIONAL { ?m hydra:required ?required }
+  OPTIONAL { ?m hydra:property ?mapsTo }
+  FILTER (LANG(?service) = "ja")
+}
+ORDER BY ?template ?variable

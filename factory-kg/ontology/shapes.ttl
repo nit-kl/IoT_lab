@@ -1,0 +1,172 @@
+# SHACL: ナレッジグラフが満たすべきルール。validate.py がこれで検証し、通らなければ S3 に上げない（懸念点 T5）。
+
+@prefix sh:     <http://www.w3.org/ns/shacl#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix xf:     <https://xcp-factory.example/def#> .
+@prefix xfs:    <https://xcp-factory.example/def/shapes#> .
+@prefix sosa:   <http://www.w3.org/ns/sosa/> .
+@prefix ssn:    <http://www.w3.org/ns/ssn/> .
+@prefix saref:  <https://saref.etsi.org/core/> .
+@prefix s4inma: <https://saref.etsi.org/saref4inma/> .
+@prefix qudt:   <http://qudt.org/schema/qudt/> .
+@prefix dcat:   <http://www.w3.org/ns/dcat#> .
+@prefix hydra:  <http://www.w3.org/ns/hydra/core#> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+
+# SHACL-SPARQL 用の接頭辞
+<https://xcp-factory.example/def/shapes>
+    a owl:Ontology ;
+    sh:declare [ sh:prefix "xf" ; sh:namespace "https://xcp-factory.example/def#"^^xsd:anyURI ] ,
+               [ sh:prefix "ssn" ; sh:namespace "http://www.w3.org/ns/ssn/"^^xsd:anyURI ] ,
+               [ sh:prefix "dcat" ; sh:namespace "http://www.w3.org/ns/dcat#"^^xsd:anyURI ] ,
+               [ sh:prefix "skos" ; sh:namespace "http://www.w3.org/2004/02/skos/core#"^^xsd:anyURI ] .
+
+# ---------- 共通部品 ----------
+
+xfs:JapaneseLabel
+    a sh:PropertyShape ;
+    sh:path rdfs:label ;
+    sh:qualifiedValueShape [ sh:languageIn ( "ja" ) ] ;
+    sh:qualifiedMinCount 1 ;
+    sh:message "日本語のラベル（rdfs:label @ja）が必要" .
+
+# ---------- 工場 → サイト → エリア → ライン（IEC 62264 の階層） ----------
+
+xfs:FactoryShape
+    a sh:NodeShape ;
+    sh:targetClass s4inma:Factory ;
+    sh:property xfs:JapaneseLabel ,
+        [ sh:path saref:consistsOf ; sh:minCount 1 ; sh:class s4inma:Site ; sh:message "工場はサイトを 1 つ以上持つ" ] .
+
+xfs:SiteShape
+    a sh:NodeShape ;
+    sh:targetClass s4inma:Site ;
+    sh:property xfs:JapaneseLabel ,
+        [ sh:path saref:consistsOf ; sh:minCount 1 ; sh:class s4inma:Area ; sh:message "サイトはエリアを 1 つ以上持つ" ] .
+
+xfs:AreaShape
+    a sh:NodeShape ;
+    sh:targetClass s4inma:Area ;
+    sh:property xfs:JapaneseLabel ,
+        [ sh:path saref:consistsOf ; sh:minCount 1 ; sh:class s4inma:WorkCenter ; sh:message "エリアはライン（ワークセンタ）を 1 つ以上持つ" ] .
+
+xfs:WorkCenterShape
+    a sh:NodeShape ;
+    sh:targetClass s4inma:WorkCenter ;
+    sh:property xfs:JapaneseLabel ,
+        [ sh:path xf:lineId ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:pattern "^LINE-[A-Z]$" ;
+          sh:message "ライン ID（xf:lineId、LINE-A 形式）が 1 つ必要" ] ,
+        [ sh:path saref:consistsOf ; sh:minCount 1 ; sh:message "ラインは設備を 1 つ以上持つ" ] ,
+        [ sh:path [ sh:inversePath saref:consistsOf ] ; sh:minCount 1 ; sh:maxCount 1 ; sh:class s4inma:Area ;
+          sh:message "ラインはちょうど 1 つのエリアに属する" ] .
+
+# ---------- 設備 ----------
+
+xfs:EquipmentShape
+    a sh:NodeShape ;
+    sh:targetSubjectsOf xf:equipmentId ;
+    sh:or ( [ sh:class s4inma:ProductionEquipment ] [ sh:class saref:Device ] ) ;
+    sh:class sosa:FeatureOfInterest ;
+    sh:property xfs:JapaneseLabel ,
+        [ sh:path xf:equipmentId ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:pattern "^[A-Z]+-[0-9]+$" ;
+          sh:message "設備 ID（xf:equipmentId、CNC-01 形式）が 1 つ必要" ] ,
+        [ sh:path s4inma:belongsToCategory ; sh:minCount 1 ; sh:maxCount 1 ; sh:class skos:Concept ;
+          sh:message "設備の分類（codes.ttl の skos:Concept）が 1 つ必要" ] ,
+        [ sh:path ssn:hasProperty ; sh:minCount 1 ; sh:class sosa:ObservableProperty ;
+          sh:message "設備は計測項目を 1 つ以上持つ" ] ,
+        [ sh:path [ sh:inversePath saref:consistsOf ] ; sh:minCount 1 ; sh:maxCount 1 ; sh:class s4inma:WorkCenter ;
+          sh:message "設備はちょうど 1 つのラインに属する" ] .
+
+# ---------- 計測項目 ----------
+
+xfs:ObservablePropertyShape
+    a sh:NodeShape ;
+    sh:targetClass sosa:ObservableProperty ;
+    sh:property xfs:JapaneseLabel ,
+        [ sh:path ssn:isPropertyOf ; sh:minCount 1 ; sh:maxCount 1 ; sh:class sosa:FeatureOfInterest ;
+          sh:message "計測対象の設備（ssn:isPropertyOf）が 1 つ必要" ] ,
+        [ sh:path xf:metricName ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+          sh:message "メトリクス名（xf:metricName）が 1 つ必要" ] ,
+        [ sh:path qudt:hasUnit ; sh:minCount 1 ; sh:maxCount 1 ; sh:class qudt:Unit ;
+          sh:message "単位（qudt:hasUnit、units.ttl にある qudt:Unit）が 1 つ必要" ] ,
+        [ sh:path xf:apiService ; sh:minCount 1 ; sh:maxCount 1 ; sh:class dcat:DataService ;
+          sh:message "値を返す API（xf:apiService）が 1 つ必要" ] ,
+        [ sh:path xf:latestEndpoint ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+          sh:message "最新値の取得 URL（xf:latestEndpoint）が 1 つ必要" ] ,
+        [ sh:path xf:readingsEndpoint ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+          sh:message "時系列の取得 URL（xf:readingsEndpoint）が 1 つ必要" ] ,
+        [ sh:path xf:valueCodeList ; sh:maxCount 1 ; sh:class skos:ConceptScheme ] ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:message "設備 → 計測項目（ssn:hasProperty）と 計測項目 → 設備（ssn:isPropertyOf）が一致しない" ;
+        sh:prefixes <https://xcp-factory.example/def/shapes> ;
+        sh:select """
+            SELECT $this WHERE {
+              $this ssn:isPropertyOf ?eq .
+              FILTER NOT EXISTS { ?eq ssn:hasProperty $this }
+            }""" ] ,
+    [
+        a sh:SPARQLConstraint ;
+        sh:message "取得 URL が API の endpointURL で始まっていない（URL の更新漏れ）" ;
+        sh:prefixes <https://xcp-factory.example/def/shapes> ;
+        sh:select """
+            SELECT $this ?value WHERE {
+              $this xf:apiService/dcat:endpointURL ?base .
+              { $this xf:latestEndpoint ?value } UNION { $this xf:readingsEndpoint ?value }
+              FILTER (!STRSTARTS(STR(?value), STR(?base)))
+            }""" ] ,
+    [
+        a sh:SPARQLConstraint ;
+        sh:message "稼働状態（metric = status）にはコード表（xf:valueCodeList）が必要" ;
+        sh:prefixes <https://xcp-factory.example/def/shapes> ;
+        sh:select """
+            SELECT $this WHERE {
+              $this xf:metricName "status" .
+              FILTER NOT EXISTS { $this xf:valueCodeList ?codes }
+            }""" ] .
+
+# ---------- API ----------
+
+xfs:DataServiceShape
+    a sh:NodeShape ;
+    sh:targetClass dcat:DataService ;
+    sh:property xfs:JapaneseLabel ,
+        [ sh:path dcat:endpointURL ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:pattern "^https://.*/$" ;
+          sh:message "endpointURL（https で始まり / で終わる）が 1 つ必要" ] ,
+        [ sh:path xf:latestTemplate ; sh:minCount 1 ; sh:maxCount 1 ; sh:class hydra:IriTemplate ] ,
+        [ sh:path xf:readingsTemplate ; sh:minCount 1 ; sh:maxCount 1 ; sh:class hydra:IriTemplate ] .
+
+xfs:IriTemplateShape
+    a sh:NodeShape ;
+    sh:targetClass hydra:IriTemplate ;
+    sh:property
+        [ sh:path hydra:template ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ,
+        [ sh:path hydra:mapping ; sh:minCount 1 ; sh:class hydra:IriTemplateMapping ] .
+
+xfs:IriTemplateMappingShape
+    a sh:NodeShape ;
+    sh:targetClass hydra:IriTemplateMapping ;
+    sh:property
+        [ sh:path hydra:variable ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ,
+        [ sh:path hydra:required ; sh:maxCount 1 ; sh:datatype xsd:boolean ] .
+
+# ---------- コード表 ----------
+
+xfs:CodeListShape
+    a sh:NodeShape ;
+    sh:targetObjectsOf xf:valueCodeList ;
+    sh:class skos:ConceptScheme ;
+    sh:sparql [
+        a sh:SPARQLConstraint ;
+        sh:message "コード表に、skos:notation（API の値）と日本語の skos:prefLabel を持つコードがない" ;
+        sh:prefixes <https://xcp-factory.example/def/shapes> ;
+        sh:select """
+            SELECT $this WHERE {
+              FILTER NOT EXISTS {
+                ?code skos:inScheme $this ; skos:notation ?n ; skos:prefLabel ?l .
+                FILTER (LANG(?l) = "ja")
+              }
+            }""" ] .

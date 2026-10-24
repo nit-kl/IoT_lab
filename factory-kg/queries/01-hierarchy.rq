@@ -1,0 +1,11 @@
+# 工場 → サイト → エリア → ライン → 設備 の階層（設備の分類つき）
+SELECT ?factory ?site ?area ?line ?equipment ?equipmentLabel ?category WHERE {
+  ?f a s4inma:Factory ; rdfs:label ?factory ; saref:consistsOf ?s .
+  ?s a s4inma:Site ; rdfs:label ?site ; saref:consistsOf ?a .
+  ?a a s4inma:Area ; rdfs:label ?area ; saref:consistsOf ?l .
+  ?l a s4inma:WorkCenter ; xf:lineId ?line ; saref:consistsOf ?e .
+  ?e xf:equipmentId ?equipment ; rdfs:label ?equipmentLabel ; s4inma:belongsToCategory/skos:prefLabel ?category .
+  FILTER (LANG(?factory) = "ja" && LANG(?site) = "ja" && LANG(?area) = "ja")
+  FILTER (LANG(?equipmentLabel) = "ja" && LANG(?category) = "ja")
+}
+ORDER BY ?line ?equipment

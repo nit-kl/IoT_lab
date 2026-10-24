@@ -1,0 +1,7 @@
+# 標準の上位クラス saref:Device にあたる設備（推論なし。imports.ttl の上位クラスを rdfs:subClassOf* でたどる）
+SELECT ?equipment ?class ?classLabel WHERE {
+  ?e xf:equipmentId ?equipment ; a ?class .
+  ?class rdfs:subClassOf* saref:Device .
+  OPTIONAL { ?class rdfs:label ?classLabel FILTER (LANG(?classLabel) = "ja") }
+}
+ORDER BY ?equipment

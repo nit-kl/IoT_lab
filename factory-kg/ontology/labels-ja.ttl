@@ -1,0 +1,32 @@
+# 参照している標準語彙の日本語ラベル（ビューアの表示用。標準側の定義は変えず、ラベルだけを追加する）。
+
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sosa:   <http://www.w3.org/ns/sosa/> .
+@prefix ssn:    <http://www.w3.org/ns/ssn/> .
+@prefix saref:  <https://saref.etsi.org/core/> .
+@prefix s4inma: <https://saref.etsi.org/saref4inma/> .
+@prefix qudt:   <http://qudt.org/schema/qudt/> .
+@prefix dcat:   <http://www.w3.org/ns/dcat#> .
+@prefix hydra:  <http://www.w3.org/ns/hydra/core#> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+
+s4inma:Factory                     rdfs:label "工場"@ja .
+s4inma:Site                        rdfs:label "サイト"@ja .
+s4inma:Area                        rdfs:label "エリア"@ja .
+s4inma:WorkCenter                  rdfs:label "ワークセンタ（生産ライン）"@ja .
+s4inma:ProductionEquipment         rdfs:label "生産設備"@ja .
+s4inma:ProductionEquipmentCategory rdfs:label "生産設備の分類"@ja .
+s4inma:belongsToCategory           rdfs:label "分類"@ja .
+saref:Device                       rdfs:label "機器"@ja .
+saref:consistsOf                   rdfs:label "構成要素"@ja .
+sosa:ObservableProperty            rdfs:label "計測項目"@ja .
+sosa:FeatureOfInterest             rdfs:label "計測対象"@ja .
+ssn:hasProperty                    rdfs:label "計測項目を持つ"@ja .
+ssn:isPropertyOf                   rdfs:label "計測対象"@ja .
+qudt:hasUnit                       rdfs:label "単位"@ja .
+qudt:Unit                          rdfs:label "単位"@ja .
+dcat:DataService                   rdfs:label "データサービス"@ja .
+dcat:endpointURL                   rdfs:label "エンドポイント URL"@ja .
+hydra:IriTemplate                  rdfs:label "URL テンプレート"@ja .
+skos:ConceptScheme                 rdfs:label "コード表"@ja .
+skos:Concept                       rdfs:label "コード"@ja .

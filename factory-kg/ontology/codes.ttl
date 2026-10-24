@@ -1,0 +1,79 @@
+# コード表（SKOS）と設備の分類。インスタンスの TTL から参照する。
+
+@prefix id:     <https://xcp-factory.example/id/> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+@prefix s4inma: <https://saref.etsi.org/saref4inma/> .
+
+# ---------- 稼働状態（metric = status の値） ----------
+
+<https://xcp-factory.example/id/scheme/equipment-status>
+    a skos:ConceptScheme ;
+    skos:prefLabel "稼働状態"@ja , "equipment status"@en ;
+    skos:definition "PRESS・CNC の status の値。skos:notation が API の value と一致する。"@ja ;
+    skos:hasTopConcept <https://xcp-factory.example/id/code/status/0> ,
+                       <https://xcp-factory.example/id/code/status/1> ,
+                       <https://xcp-factory.example/id/code/status/2> .
+
+<https://xcp-factory.example/id/code/status/0>
+    a skos:Concept ;
+    skos:inScheme <https://xcp-factory.example/id/scheme/equipment-status> ;
+    skos:topConceptOf <https://xcp-factory.example/id/scheme/equipment-status> ;
+    skos:notation "0" ;
+    skos:prefLabel "停止"@ja , "stopped"@en ;
+    skos:definition "計画停止（夜間・昼休み・休日）を含む停止。"@ja .
+
+<https://xcp-factory.example/id/code/status/1>
+    a skos:Concept ;
+    skos:inScheme <https://xcp-factory.example/id/scheme/equipment-status> ;
+    skos:topConceptOf <https://xcp-factory.example/id/scheme/equipment-status> ;
+    skos:notation "1" ;
+    skos:prefLabel "稼働"@ja , "running"@en .
+
+<https://xcp-factory.example/id/code/status/2>
+    a skos:Concept ;
+    skos:inScheme <https://xcp-factory.example/id/scheme/equipment-status> ;
+    skos:topConceptOf <https://xcp-factory.example/id/scheme/equipment-status> ;
+    skos:notation "2" ;
+    skos:prefLabel "異常停止"@ja , "alarm stop"@en ;
+    skos:definition "異常による停止（チョコ停など）。"@ja .
+
+# ---------- 設備の分類（s4inma:belongsToCategory の参照先） ----------
+# 生産設備の分類は s4inma:ProductionEquipmentCategory、それ以外（ユーティリティ・センサ）は SKOS の概念のみ。
+
+<https://xcp-factory.example/id/scheme/equipment-category>
+    a skos:ConceptScheme ;
+    skos:prefLabel "設備の分類"@ja , "equipment category"@en ;
+    skos:definition "設備 ID の接頭辞（PRESS / CNC / CONV / COMP / ENV）ごとの分類。"@ja .
+
+<https://xcp-factory.example/id/category/press>
+    a skos:Concept , s4inma:ProductionEquipmentCategory ;
+    skos:inScheme <https://xcp-factory.example/id/scheme/equipment-category> ;
+    skos:notation "PRESS" ;
+    skos:prefLabel "プレス機"@ja , "press machine"@en .
+
+<https://xcp-factory.example/id/category/cnc>
+    a skos:Concept , s4inma:ProductionEquipmentCategory ;
+    skos:inScheme <https://xcp-factory.example/id/scheme/equipment-category> ;
+    skos:notation "CNC" ;
+    skos:prefLabel "CNC 加工機"@ja , "CNC machining center"@en .
+
+<https://xcp-factory.example/id/category/conveyor>
+    a skos:Concept , s4inma:ProductionEquipmentCategory ;
+    skos:inScheme <https://xcp-factory.example/id/scheme/equipment-category> ;
+    skos:notation "CONV" ;
+    skos:prefLabel "搬送コンベア"@ja , "conveyor"@en .
+
+<https://xcp-factory.example/id/category/compressor>
+    a skos:Concept ;
+    skos:inScheme <https://xcp-factory.example/id/scheme/equipment-category> ;
+    skos:notation "COMP" ;
+    skos:prefLabel "エアコンプレッサ"@ja , "air compressor"@en ;
+    skos:definition "ユーティリティ設備（製品を作らないため s4inma:ProductionEquipmentCategory にはしない）。"@ja .
+
+<https://xcp-factory.example/id/category/environment-sensor>
+    a skos:Concept ;
+    skos:inScheme <https://xcp-factory.example/id/scheme/equipment-category> ;
+    skos:notation "ENV" ;
+    skos:prefLabel "環境センサ"@ja , "environment sensor"@en ;
+    skos:definition "工場内の温度・湿度・CO2 を測るセンサ機器。"@ja .

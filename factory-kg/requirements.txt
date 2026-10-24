@@ -1,0 +1,5 @@
+rdflib>=7.1
+pyshacl>=0.26
+pyoxigraph>=0.5
+# [crt] は aws login の認証情報を boto3 から使うために必要（replay の API から生成するとき）
+boto3[crt]>=1.35

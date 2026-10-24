@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+# 公式から取得した標準語彙（vocab.py が取り直せる）
+.cache/
+# 生成物（examples/ の例はコミットする）
+build/
