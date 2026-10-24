@@ -4,3 +4,6 @@ __pycache__/
 .cache/
 # 生成物（examples/ の例はコミットする）
 build/
+
+# postman.py env が作る Environment には AWS の認証情報が入る
+postman/*.postman_environment.json
