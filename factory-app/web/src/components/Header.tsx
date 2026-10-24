@@ -19,7 +19,7 @@ function Pill({ icon, label, value, tone, title }: { icon: React.ReactNode; labe
 }
 
 export function Header({ onRefresh, refreshing }: { onRefresh: () => void; refreshing: boolean }) {
-  const { config, status, theme, toggleTheme, autoRefresh, setAutoRefresh } = useApp();
+  const { config, status, agent, theme, toggleTheme, autoRefresh, setAutoRefresh } = useApp();
   const replay = status?.replay;
   const replayText = !replay
     ? "—"
@@ -47,7 +47,13 @@ export function Header({ onRefresh, refreshing }: { onRefresh: () => void; refre
       <div className="ml-4 flex flex-wrap items-center gap-2">
         <Pill icon={<Activity size={13} />} label="replay" value={replayText} tone={replay?.unavailable ? "warn" : replay ? "ok" : "idle"} title={replay?.unavailable ?? replay?.source_key} />
         <Pill icon={<Database size={13} />} label="KG" value={status ? `${status.graph.triples.toLocaleString()} トリプル` : "—"} tone={status ? "ok" : "idle"} />
-        <Pill icon={<Bot size={13} />} label="AI" value="ステップ 3 で実装" tone="idle" />
+        <Pill
+          icon={<Bot size={13} />}
+          label="AI"
+          value={!agent ? "—" : agent.limits ? `今日 ${(agent.spent.today ?? 0).toFixed(2)} 円 / ${agent.limits.daily_yen} 円` : "使えません"}
+          tone={!agent ? "idle" : agent.enabled ? "ok" : "warn"}
+          title={agent?.reason ?? "③ の費用（この PC で使った分の目安）"}
+        />
       </div>
       <div className="ml-auto flex items-center gap-3">
         <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-500 dark:text-slate-400" title="画面を表示している間だけ、1 分ごとに値を取り直す">

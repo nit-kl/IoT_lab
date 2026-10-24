@@ -126,3 +126,52 @@ export type Selection =
   | { kind: "node"; iri: string }
   | { kind: "equipment"; id: string }
   | { kind: "property"; equipment: string; metric: string };
+
+// ---------- ③ AI エージェント（app_server.py の /api/agent） ----------
+
+export interface AgentModel {
+  key: string;
+  label: string;
+  model_id: string;
+  allowed: boolean;
+  price: { input: number; output: number }; // 100 万トークンあたりのドル
+}
+
+export interface AgentStatus {
+  enabled: boolean;
+  reason: string | null;
+  busy?: boolean;
+  default?: string;
+  models: AgentModel[];
+  limits?: {
+    max_tool_calls: number;
+    max_output_tokens: number;
+    max_input_tokens: number;
+    per_question_yen: number;
+    daily_yen: number;
+    monthly_yen: number;
+  };
+  usd_jpy?: number;
+  spent: { today?: number; month?: number };
+}
+
+export interface AgentUsage {
+  calls: number;
+  tool_calls: number;
+  yen: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheWriteInputTokens: number;
+}
+
+/** 答えの途中経過（1 行 1 JSON で届く） */
+export type AgentEvent =
+  | { type: "text"; delta: string }
+  | { type: "tool_start"; id: string; name: string; input: unknown }
+  | { type: "tool_end"; id: string; name: string; error: boolean; preview: string }
+  | { type: "highlight"; ids: string[]; reason: string }
+  | { type: "usage"; call: number; yen: number }
+  | { type: "done"; stop: string; notice: string | null; model: string; usage: AgentUsage; spent: { today: number; month: number } }
+  | { type: "error"; message: string }
+  | { type: "cancelled" };

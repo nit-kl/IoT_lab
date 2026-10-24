@@ -1,7 +1,7 @@
 // 3 つの画面で共有する状態（選択中の設備・強調中の設備・データ）。各画面はこれを見て描き直す
 import { create } from "zustand";
-import { rest } from "./api";
-import type { AppConfig, AppStatus, EquipmentDetail, EquipmentSummary, Selection, TreeNode } from "./types";
+import { getAgentStatus, rest } from "./api";
+import type { AgentStatus, AppConfig, AppStatus, EquipmentDetail, EquipmentSummary, Selection, TreeNode } from "./types";
 
 export type Tab = "graph" | "factory3d";
 
@@ -16,6 +16,7 @@ interface AppState {
   equipment: EquipmentSummary[];
   details: Record<string, EquipmentDetail>; // 設備 ID → 詳細（最新値つき）
   status: AppStatus | null;
+  agent: AgentStatus | null; // ③ の状態（使えるモデル・今日と今月の費用）
   refreshedAt: number;
   error: string | null;
 
@@ -30,6 +31,7 @@ interface AppState {
   refreshValues(): Promise<void>;
   loadDetail(id: string, force?: boolean): Promise<EquipmentDetail | undefined>;
   loadAllDetails(): Promise<void>;
+  loadAgent(): Promise<void>;
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -43,6 +45,7 @@ export const useApp = create<AppState>((set, get) => ({
   equipment: [],
   details: {},
   status: null,
+  agent: null,
   refreshedAt: 0,
   error: null,
 
@@ -89,6 +92,10 @@ export const useApp = create<AppState>((set, get) => ({
     const detail = await rest<EquipmentDetail>(`/v1/equipment/${encodeURIComponent(id)}`);
     set((s) => ({ details: { ...s.details, [id]: detail } }));
     return detail;
+  },
+
+  loadAgent: async () => {
+    set({ agent: await getAgentStatus() });
   },
 
   /** ② 用に、まだ読んでいない設備の詳細（全計測項目の最新値）をまとめて読む */

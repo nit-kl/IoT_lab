@@ -6,6 +6,9 @@
     GET  /api/config               画面の設定（モード・接頭辞など）
     GET  /api/rest?path=/v1/…&…    REST API（GET の /v1/… だけ）
     POST /api/sparql               KG の SPARQL（読み取りのみ。KG 側でも更新は拒否される）
+    GET  /api/agent                ③ エージェントの状態（使えるモデル・上限・今日と今月の費用）
+    POST /api/agent/ask            ③ に質問する（{"question", "history", "model"}）。答えは 1 行 1 JSON で逐次返す
+    POST /api/agent/cancel         ③ の回答を中止する
 
 ほかの Web サイトから悪用されないよう、待ち受けは 127.0.0.1 のみ、Host ヘッダーは localhost だけ、
 API には独自ヘッダー（X-Requested-By: factory-app）を必須にしている（factory-kg のビューアと同じ）。
@@ -60,6 +63,14 @@ class AwsBackend:
         return {"mode": "aws", "owner": self.owner, "kg": self.client.base, "rest": self.client.api_base}
 
 
+agent_unavailable = "③ エージェントは使えません"
+
+
+def set_agent_unavailable(message):
+    global agent_unavailable
+    agent_unavailable = message
+
+
 def static_file(path):
     """web/dist の中のファイル。拡張子のないパス（画面の中の移動）は index.html を返す。"""
     rel = urlsplit(path).path.lstrip("/") or "index.html"
@@ -74,7 +85,7 @@ def static_file(path):
     return None
 
 
-def make_handler(backend, port):
+def make_handler(backend, port, agent=None):
     class Handler(BaseHTTPRequestHandler):
         server_version = "factory-app"
 
@@ -111,6 +122,10 @@ def make_handler(backend, port):
                 query = {k: v[0] for k, v in parse_qs(parts.query).items()}
                 if parts.path == "/api/config":
                     return self.send(200, {**backend.describe(), "prefixes": {k: str(v) for k, v in PREFIXES.items()}})
+                if parts.path == "/api/agent":
+                    if agent is None:
+                        return self.send(200, {"enabled": False, "reason": agent_unavailable, "models": [], "spent": {}})
+                    return self.send(200, agent.status())
                 if parts.path == "/api/rest":
                     path = query.pop("path", "")
                     if not REST_PATH.fullmatch(path) or ".." in path:
@@ -142,7 +157,58 @@ def make_handler(backend, port):
             if path == "/api/sparql":
                 status, data, ctype = backend.sparql(body.decode(), self.headers.get("Accept") or "application/sparql-results+json")
                 return self.send(status, data, ctype or "application/json")
+            if path == "/api/agent/ask":
+                return self.ask(body)
+            if path == "/api/agent/cancel":
+                if agent:
+                    agent.cancel()
+                return self.send(200, {"cancelled": True})
             return self.send(404, {"error": f"{path} はありません"})
+
+        def ask(self, body):
+            """③ に質問する。答えは 1 行 1 JSON（NDJSON）で、届いた順に書き出す。画面が閉じたら（書き込みに失敗したら）止める。"""
+            from agent import AgentError, Cancelled, explain_error
+            if agent is None:
+                return self.send(503, {"error": agent_unavailable})
+            try:
+                request = json.loads(body)
+                assert isinstance(request, dict)
+            except (ValueError, AssertionError):
+                return self.send(400, {"error": "JSON で送ってください"})
+            started = False
+
+            def emit(event):
+                nonlocal started
+                if not started:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Content-Security-Policy", CSP)
+                    self.end_headers()
+                    started = True
+                self.wfile.write((json.dumps(event, ensure_ascii=False) + "\n").encode())
+                self.wfile.flush()
+
+            try:
+                agent.ask(request.get("question"), request.get("history"), request.get("model"), emit)
+            except AgentError as e:
+                if not started:
+                    return self.send(409, {"error": str(e)})
+                emit({"type": "error", "message": str(e)})
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                agent.cancel()  # 画面が閉じた・中止した
+            except Cancelled:
+                try:
+                    emit({"type": "cancelled"})
+                except OSError:
+                    pass
+            except Exception as e:  # noqa: BLE001  画面に理由を出す
+                sys.stderr.write(f"agent: {type(e).__name__}: {e}\n")
+                try:
+                    emit({"type": "error", "message": explain_error(e)})
+                except OSError:
+                    pass
 
     return Handler
 
@@ -171,7 +237,15 @@ def main():
         backend = DemoBackend(speed=args.demo_speed, start_offset_minutes=int(m[1]) * 60 + int(m[2]))
     else:
         backend = AwsBackend(args.owner, args.region)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(backend, args.port))
+    agent = None
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from agent import Agent
+        agent = Agent(backend, region=args.region)
+    except Exception as e:  # noqa: BLE001  設定の誤りなどでも ①・② は使えるようにする
+        set_agent_unavailable(f"③ エージェントの設定を読めません: {e}")
+        print(f"注意: {agent_unavailable}", file=sys.stderr)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(backend, args.port, agent))
     url = f"http://127.0.0.1:{args.port}/"
     for k, v in backend.describe().items():
         print(f"{k:7}: {v}")

@@ -1,6 +1,6 @@
 // app_server.py の API を呼ぶ（REST API と SPARQL。認証の署名はサーバー側で付ける）
 
-import type { AppConfig } from "./types";
+import type { AgentEvent, AgentStatus, AppConfig } from "./types";
 
 const HEADERS = { "X-Requested-By": "factory-app" };
 
@@ -69,4 +69,46 @@ export async function sparql(query: string): Promise<{ vars: string[]; rows: Bin
   const body = (await parse(res)) as { head: { vars: string[] }; results?: { bindings: Binding[] }; boolean?: boolean };
   if (body.results === undefined) return { vars: ["result"], rows: [{ result: { type: "literal", value: String(body.boolean) } }] };
   return { vars: body.head.vars, rows: body.results.bindings };
+}
+
+// ---------- ③ AI エージェント ----------
+
+export async function getAgentStatus(): Promise<AgentStatus> {
+  return (await parse(await fetch("/api/agent", { headers: HEADERS }))) as AgentStatus;
+}
+
+/** 質問を送り、答えの途中経過（1 行 1 JSON）を届いた順に onEvent に渡す。signal で中止できる */
+export async function askAgent(
+  body: { question: string; history: { role: "user" | "assistant"; text: string }[]; model: string },
+  onEvent: (event: AgentEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const res = await fetch("/api/agent/ask", {
+    method: "POST",
+    headers: { ...HEADERS, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    await parse(res);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline: number;
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line) onEvent(JSON.parse(line) as AgentEvent);
+    }
+  }
+}
+
+export async function cancelAgent(): Promise<void> {
+  await fetch("/api/agent/cancel", { method: "POST", headers: HEADERS }).catch(() => undefined);
 }
