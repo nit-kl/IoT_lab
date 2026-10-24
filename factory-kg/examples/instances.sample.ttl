@@ -1,0 +1,336 @@
+# 生成ファイル（factory-kg/tools/generate_ttl.py）。手で編集しない。
+# 設備・計測項目を変えたいときは replay のデータか generate_ttl.py のカタログを直して再生成する。
+
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix s4inma: <https://saref.etsi.org/saref4inma/> .
+@prefix saref: <https://saref.etsi.org/core/> .
+@prefix sosa: <http://www.w3.org/ns/sosa/> .
+@prefix ssn: <http://www.w3.org/ns/ssn/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+@prefix xf: <https://xcp-factory.example/def#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://xcp-factory.example/id/factory/sample> a s4inma:Factory ;
+    rdfs:label "Sample factory"@en,
+        "サンプル工場"@ja ;
+    saref:consistsOf <https://xcp-factory.example/id/site/sample> .
+
+<https://xcp-factory.example/id/graph/instances> a prov:Entity ;
+    rdfs:label "工場のインスタンス（生成）"@ja ;
+    dcterms:created "2026-10-24T07:30:06+00:00"^^xsd:dateTime ;
+    dcterms:source "CSV: factory_sample.csv" ;
+    prov:wasAttributedTo <https://xcp-factory.example/id/agent/generate_ttl> .
+
+<https://xcp-factory.example/id/agent/generate_ttl> a prov:SoftwareAgent ;
+    rdfs:label "factory-kg/tools/generate_ttl.py" .
+
+<https://xcp-factory.example/id/area/production> a s4inma:Area ;
+    rdfs:label "Production area"@en,
+        "製造エリア"@ja ;
+    saref:consistsOf <https://xcp-factory.example/id/line/LINE-A> .
+
+<https://xcp-factory.example/id/line/LINE-A> a s4inma:WorkCenter ;
+    rdfs:label "Line A"@en,
+        "ライン A"@ja ;
+    saref:consistsOf <https://xcp-factory.example/id/equipment/CNC-01>,
+        <https://xcp-factory.example/id/equipment/COMP-01>,
+        <https://xcp-factory.example/id/equipment/CONV-01>,
+        <https://xcp-factory.example/id/equipment/ENV-01>,
+        <https://xcp-factory.example/id/equipment/PRESS-01> ;
+    xf:lineId "LINE-A" .
+
+<https://xcp-factory.example/id/property/CNC-01/spindle_load> a sosa:ObservableProperty ;
+    rdfs:label "CNC-01 spindle load"@en,
+        "CNC-01 主軸負荷"@ja ;
+    qudt:hasUnit unit:PERCENT ;
+    rdfs:comment "主軸モータの負荷率"@ja ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/CNC-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=CNC-01&metric=spindle_load> ;
+    xf:metricName "spindle_load" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=CNC-01&metric=spindle_load> .
+
+<https://xcp-factory.example/id/property/CNC-01/spindle_speed> a sosa:ObservableProperty ;
+    rdfs:label "CNC-01 spindle speed"@en,
+        "CNC-01 主軸回転数"@ja ;
+    qudt:hasUnit unit:REV-PER-MIN ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/CNC-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=CNC-01&metric=spindle_speed> ;
+    xf:metricName "spindle_speed" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=CNC-01&metric=spindle_speed> .
+
+<https://xcp-factory.example/id/property/CNC-01/status> a sosa:ObservableProperty ;
+    rdfs:label "CNC-01 status"@en,
+        "CNC-01 稼働状態"@ja ;
+    qudt:hasUnit unit:UNITLESS ;
+    rdfs:comment "0=停止 1=稼働 2=異常停止（xf:valueCodeList のコード表を参照）"@ja ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/CNC-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=CNC-01&metric=status> ;
+    xf:metricName "status" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=CNC-01&metric=status> ;
+    xf:valueCodeList <https://xcp-factory.example/id/scheme/equipment-status> .
+
+<https://xcp-factory.example/id/property/CNC-01/work_count> a sosa:ObservableProperty ;
+    rdfs:label "CNC-01 work count"@en,
+        "CNC-01 加工数"@ja ;
+    qudt:hasUnit unit:NUM ;
+    rdfs:comment "その計測間隔内の加工完了数（累計ではない）"@ja ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/CNC-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=CNC-01&metric=work_count> ;
+    xf:metricName "work_count" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=CNC-01&metric=work_count> .
+
+<https://xcp-factory.example/id/property/COMP-01/discharge_pressure> a sosa:ObservableProperty ;
+    rdfs:label "COMP-01 discharge pressure"@en,
+        "COMP-01 吐出圧力"@ja ;
+    qudt:hasUnit unit:MegaPA ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/COMP-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=COMP-01&metric=discharge_pressure> ;
+    xf:metricName "discharge_pressure" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=COMP-01&metric=discharge_pressure> .
+
+<https://xcp-factory.example/id/property/COMP-01/power> a sosa:ObservableProperty ;
+    rdfs:label "COMP-01 power consumption"@en,
+        "COMP-01 消費電力"@ja ;
+    qudt:hasUnit unit:KiloW ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/COMP-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=COMP-01&metric=power> ;
+    xf:metricName "power" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=COMP-01&metric=power> .
+
+<https://xcp-factory.example/id/property/CONV-01/motor_temp> a sosa:ObservableProperty ;
+    rdfs:label "CONV-01 motor temperature"@en,
+        "CONV-01 モータ温度"@ja ;
+    qudt:hasUnit unit:DEG_C ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/CONV-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=CONV-01&metric=motor_temp> ;
+    xf:metricName "motor_temp" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=CONV-01&metric=motor_temp> .
+
+<https://xcp-factory.example/id/property/CONV-01/speed> a sosa:ObservableProperty ;
+    rdfs:label "CONV-01 conveyor speed"@en,
+        "CONV-01 搬送速度"@ja ;
+    qudt:hasUnit unit:M-PER-MIN ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/CONV-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=CONV-01&metric=speed> ;
+    xf:metricName "speed" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=CONV-01&metric=speed> .
+
+<https://xcp-factory.example/id/property/ENV-01/co2> a sosa:ObservableProperty ;
+    rdfs:label "ENV-01 CO2 concentration"@en,
+        "ENV-01 CO2 濃度"@ja ;
+    qudt:hasUnit unit:PPM ;
+    rdfs:comment "工場内の CO2 濃度"@ja ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/ENV-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=ENV-01&metric=co2> ;
+    xf:metricName "co2" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=ENV-01&metric=co2> .
+
+<https://xcp-factory.example/id/property/ENV-01/humidity> a sosa:ObservableProperty ;
+    rdfs:label "ENV-01 relative humidity"@en,
+        "ENV-01 湿度"@ja ;
+    qudt:hasUnit unit:PERCENT ;
+    rdfs:comment "工場内の相対湿度"@ja ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/ENV-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=ENV-01&metric=humidity> ;
+    xf:metricName "humidity" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=ENV-01&metric=humidity> .
+
+<https://xcp-factory.example/id/property/ENV-01/temperature> a sosa:ObservableProperty ;
+    rdfs:label "ENV-01 temperature"@en,
+        "ENV-01 温度"@ja ;
+    qudt:hasUnit unit:DEG_C ;
+    rdfs:comment "工場内の室温"@ja ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/ENV-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=ENV-01&metric=temperature> ;
+    xf:metricName "temperature" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=ENV-01&metric=temperature> .
+
+<https://xcp-factory.example/id/property/PRESS-01/hydraulic_pressure> a sosa:ObservableProperty ;
+    rdfs:label "PRESS-01 hydraulic pressure"@en,
+        "PRESS-01 油圧"@ja ;
+    qudt:hasUnit unit:MegaPA ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/PRESS-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=PRESS-01&metric=hydraulic_pressure> ;
+    xf:metricName "hydraulic_pressure" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=PRESS-01&metric=hydraulic_pressure> .
+
+<https://xcp-factory.example/id/property/PRESS-01/motor_current> a sosa:ObservableProperty ;
+    rdfs:label "PRESS-01 motor current"@en,
+        "PRESS-01 モータ電流"@ja ;
+    qudt:hasUnit unit:A ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/PRESS-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=PRESS-01&metric=motor_current> ;
+    xf:metricName "motor_current" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=PRESS-01&metric=motor_current> .
+
+<https://xcp-factory.example/id/property/PRESS-01/shot_count> a sosa:ObservableProperty ;
+    rdfs:label "PRESS-01 shot count"@en,
+        "PRESS-01 ショット数"@ja ;
+    qudt:hasUnit unit:NUM ;
+    rdfs:comment "その計測間隔内のショット数（累計ではない）"@ja ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/PRESS-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=PRESS-01&metric=shot_count> ;
+    xf:metricName "shot_count" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=PRESS-01&metric=shot_count> .
+
+<https://xcp-factory.example/id/property/PRESS-01/status> a sosa:ObservableProperty ;
+    rdfs:label "PRESS-01 status"@en,
+        "PRESS-01 稼働状態"@ja ;
+    qudt:hasUnit unit:UNITLESS ;
+    rdfs:comment "0=停止 1=稼働 2=異常停止（xf:valueCodeList のコード表を参照）"@ja ;
+    ssn:isPropertyOf <https://xcp-factory.example/id/equipment/PRESS-01> ;
+    xf:apiService <https://xcp-factory.example/id/service/replay-api> ;
+    xf:latestEndpoint <https://replay-api.invalid/latest?equipment=PRESS-01&metric=status> ;
+    xf:metricName "status" ;
+    xf:readingsEndpoint <https://replay-api.invalid/readings?equipment=PRESS-01&metric=status> ;
+    xf:valueCodeList <https://xcp-factory.example/id/scheme/equipment-status> .
+
+<https://xcp-factory.example/id/service/replay-api/template/latest> a hydra:IriTemplate ;
+    hydra:mapping <https://xcp-factory.example/id/service/replay-api/template/latest/equipment>,
+        <https://xcp-factory.example/id/service/replay-api/template/latest/metric> ;
+    hydra:template "latest{?equipment,metric}" ;
+    hydra:variableRepresentation hydra:BasicRepresentation .
+
+<https://xcp-factory.example/id/service/replay-api/template/latest/equipment> a hydra:IriTemplateMapping ;
+    hydra:property xf:equipmentId ;
+    hydra:required true ;
+    hydra:variable "equipment" .
+
+<https://xcp-factory.example/id/service/replay-api/template/latest/metric> a hydra:IriTemplateMapping ;
+    hydra:property xf:metricName ;
+    hydra:required true ;
+    hydra:variable "metric" .
+
+<https://xcp-factory.example/id/service/replay-api/template/readings> a hydra:IriTemplate ;
+    hydra:mapping <https://xcp-factory.example/id/service/replay-api/template/readings/equipment>,
+        <https://xcp-factory.example/id/service/replay-api/template/readings/from>,
+        <https://xcp-factory.example/id/service/replay-api/template/readings/limit>,
+        <https://xcp-factory.example/id/service/replay-api/template/readings/metric>,
+        <https://xcp-factory.example/id/service/replay-api/template/readings/minutes>,
+        <https://xcp-factory.example/id/service/replay-api/template/readings/next>,
+        <https://xcp-factory.example/id/service/replay-api/template/readings/source_from>,
+        <https://xcp-factory.example/id/service/replay-api/template/readings/source_to>,
+        <https://xcp-factory.example/id/service/replay-api/template/readings/to> ;
+    hydra:template "readings{?equipment,metric,minutes,from,to,source_from,source_to,limit,next}" ;
+    hydra:variableRepresentation hydra:BasicRepresentation .
+
+<https://xcp-factory.example/id/service/replay-api/template/readings/equipment> a hydra:IriTemplateMapping ;
+    hydra:property xf:equipmentId ;
+    hydra:required true ;
+    hydra:variable "equipment" .
+
+<https://xcp-factory.example/id/service/replay-api/template/readings/from> a hydra:IriTemplateMapping ;
+    hydra:required false ;
+    hydra:variable "from" .
+
+<https://xcp-factory.example/id/service/replay-api/template/readings/limit> a hydra:IriTemplateMapping ;
+    hydra:required false ;
+    hydra:variable "limit" .
+
+<https://xcp-factory.example/id/service/replay-api/template/readings/metric> a hydra:IriTemplateMapping ;
+    hydra:property xf:metricName ;
+    hydra:required true ;
+    hydra:variable "metric" .
+
+<https://xcp-factory.example/id/service/replay-api/template/readings/minutes> a hydra:IriTemplateMapping ;
+    hydra:required false ;
+    hydra:variable "minutes" .
+
+<https://xcp-factory.example/id/service/replay-api/template/readings/next> a hydra:IriTemplateMapping ;
+    hydra:required false ;
+    hydra:variable "next" .
+
+<https://xcp-factory.example/id/service/replay-api/template/readings/source_from> a hydra:IriTemplateMapping ;
+    hydra:required false ;
+    hydra:variable "source_from" .
+
+<https://xcp-factory.example/id/service/replay-api/template/readings/source_to> a hydra:IriTemplateMapping ;
+    hydra:required false ;
+    hydra:variable "source_to" .
+
+<https://xcp-factory.example/id/service/replay-api/template/readings/to> a hydra:IriTemplateMapping ;
+    hydra:required false ;
+    hydra:variable "to" .
+
+<https://xcp-factory.example/id/site/sample> a s4inma:Site ;
+    rdfs:label "Sample factory site"@en,
+        "サンプル工場 サイト"@ja ;
+    saref:consistsOf <https://xcp-factory.example/id/area/production> .
+
+<https://xcp-factory.example/id/equipment/COMP-01> a sosa:FeatureOfInterest,
+        saref:Device ;
+    rdfs:label "Air compressor 01"@en,
+        "エアコンプレッサ 01"@ja ;
+    ssn:hasProperty <https://xcp-factory.example/id/property/COMP-01/discharge_pressure>,
+        <https://xcp-factory.example/id/property/COMP-01/power> ;
+    s4inma:belongsToCategory <https://xcp-factory.example/id/category/compressor> ;
+    xf:equipmentId "COMP-01" .
+
+<https://xcp-factory.example/id/equipment/CONV-01> a sosa:FeatureOfInterest,
+        s4inma:ProductionEquipment ;
+    rdfs:label "Conveyor 01"@en,
+        "搬送コンベア 01"@ja ;
+    ssn:hasProperty <https://xcp-factory.example/id/property/CONV-01/motor_temp>,
+        <https://xcp-factory.example/id/property/CONV-01/speed> ;
+    s4inma:belongsToCategory <https://xcp-factory.example/id/category/conveyor> ;
+    xf:equipmentId "CONV-01" .
+
+<https://xcp-factory.example/id/equipment/ENV-01> a sosa:FeatureOfInterest,
+        saref:Device ;
+    rdfs:label "Environment sensor 01"@en,
+        "環境センサ 01"@ja ;
+    ssn:hasProperty <https://xcp-factory.example/id/property/ENV-01/co2>,
+        <https://xcp-factory.example/id/property/ENV-01/humidity>,
+        <https://xcp-factory.example/id/property/ENV-01/temperature> ;
+    s4inma:belongsToCategory <https://xcp-factory.example/id/category/environment-sensor> ;
+    xf:equipmentId "ENV-01" .
+
+<https://xcp-factory.example/id/equipment/CNC-01> a sosa:FeatureOfInterest,
+        s4inma:ProductionEquipment ;
+    rdfs:label "CNC machining center 01"@en,
+        "CNC 加工機 01"@ja ;
+    ssn:hasProperty <https://xcp-factory.example/id/property/CNC-01/spindle_load>,
+        <https://xcp-factory.example/id/property/CNC-01/spindle_speed>,
+        <https://xcp-factory.example/id/property/CNC-01/status>,
+        <https://xcp-factory.example/id/property/CNC-01/work_count> ;
+    s4inma:belongsToCategory <https://xcp-factory.example/id/category/cnc> ;
+    xf:equipmentId "CNC-01" .
+
+<https://xcp-factory.example/id/equipment/PRESS-01> a sosa:FeatureOfInterest,
+        s4inma:ProductionEquipment ;
+    rdfs:label "Press machine 01"@en,
+        "プレス機 01"@ja ;
+    ssn:hasProperty <https://xcp-factory.example/id/property/PRESS-01/hydraulic_pressure>,
+        <https://xcp-factory.example/id/property/PRESS-01/motor_current>,
+        <https://xcp-factory.example/id/property/PRESS-01/shot_count>,
+        <https://xcp-factory.example/id/property/PRESS-01/status> ;
+    s4inma:belongsToCategory <https://xcp-factory.example/id/category/press> ;
+    xf:equipmentId "PRESS-01" .
+
+<https://xcp-factory.example/id/service/replay-api> a dcat:DataService ;
+    rdfs:label "factory CSV replay HTTP API"@en,
+        "工場 CSV リプレイ HTTP API"@ja ;
+    rdfs:comment "factory-replay の HTTP API（Lambda Function URL）。IAM 認証のため、SigV4 署名（サービス名 lambda、リージョン ap-northeast-1）が必要。時刻は日本時間で返す。"@ja ;
+    dcat:endpointURL <https://replay-api.invalid/> ;
+    xf:latestTemplate <https://xcp-factory.example/id/service/replay-api/template/latest> ;
+    xf:readingsTemplate <https://xcp-factory.example/id/service/replay-api/template/readings> .
+

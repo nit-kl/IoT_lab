@@ -1,0 +1,13 @@
+# ビューア: 工場 → サイト → エリア → ライン → 設備 のノードと親子関係
+SELECT ?node ?kind ?label ?code ?parent ?category WHERE {
+  { ?node a s4inma:Factory BIND("factory" AS ?kind) }
+  UNION { ?node a s4inma:Site BIND("site" AS ?kind) }
+  UNION { ?node a s4inma:Area BIND("area" AS ?kind) }
+  UNION { ?node a s4inma:WorkCenter ; xf:lineId ?code BIND("line" AS ?kind) }
+  UNION {
+    ?node xf:equipmentId ?code BIND("equipment" AS ?kind)
+    OPTIONAL { ?node s4inma:belongsToCategory/skos:prefLabel ?category FILTER (LANG(?category) = "ja") }
+  }
+  OPTIONAL { ?node rdfs:label ?label FILTER (LANG(?label) = "ja") }
+  OPTIONAL { ?parent saref:consistsOf ?node }
+}

@@ -1,0 +1,10 @@
+# ライン A の設備ごとの計測項目・単位・最新値の取得 URL
+SELECT ?equipment ?property ?metric ?unit ?symbol ?latestEndpoint WHERE {
+  ?line xf:lineId "LINE-A" ; saref:consistsOf ?e .
+  ?e xf:equipmentId ?equipment ; ssn:hasProperty ?p .
+  ?p rdfs:label ?property ; xf:metricName ?metric ; qudt:hasUnit ?u ; xf:latestEndpoint ?latestEndpoint .
+  ?u rdfs:label ?unit .
+  OPTIONAL { ?u qudt:symbol ?symbol }
+  FILTER (LANG(?property) = "ja" && LANG(?unit) = "ja")
+}
+ORDER BY ?equipment ?metric

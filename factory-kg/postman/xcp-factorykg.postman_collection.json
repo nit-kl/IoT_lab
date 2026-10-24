@@ -1,0 +1,469 @@
+{
+  "info": {
+    "name": "xcp-factorykg SPARQL",
+    "description": "工場ナレッジグラフの SPARQL エンドポイント（Lambda Function URL、IAM 認証、読み取り専用）。\n\n1. `python tools/postman.py env --owner <owner>` で Environment を作ってインポートする\n2. 右上の Environment で `xcp-factorykg-<owner>` を選ぶ\n3. 各リクエストを Send\n\nこのファイルは `python tools/postman.py collection` で queries/*.rq から生成している（手で編集しない）。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "awsv4",
+    "awsv4": [
+      {
+        "key": "accessKey",
+        "value": "{{accessKeyId}}",
+        "type": "string"
+      },
+      {
+        "key": "secretKey",
+        "value": "{{secretAccessKey}}",
+        "type": "string"
+      },
+      {
+        "key": "sessionToken",
+        "value": "{{sessionToken}}",
+        "type": "string"
+      },
+      {
+        "key": "region",
+        "value": "{{region}}",
+        "type": "string"
+      },
+      {
+        "key": "service",
+        "value": "lambda",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "1. status（公開中のグラフ）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{sparqlUrl}}/status",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "status"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('トリプルがある', () => pm.expect(pm.response.json().triples).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. status（S3 から読み直す）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{sparqlUrl}}/status?reload=1",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "status"
+          ],
+          "query": [
+            {
+              "key": "reload",
+              "value": "1"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          }
+        ],
+        "description": "publish 直後に、新しいグラフが使われているかを確かめる。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. 01-hierarchy（工場 → サイト → エリア → ライン → 設備 の階層（設備の分類つき））",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{sparqlUrl}}/sparql",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "sparql"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/sparql-query"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "PREFIX xf: <https://xcp-factory.example/def#>\nPREFIX id: <https://xcp-factory.example/id/>\nPREFIX sosa: <http://www.w3.org/ns/sosa/>\nPREFIX ssn: <http://www.w3.org/ns/ssn/>\nPREFIX saref: <https://saref.etsi.org/core/>\nPREFIX s4inma: <https://saref.etsi.org/saref4inma/>\nPREFIX qudt: <http://qudt.org/schema/qudt/>\nPREFIX unit: <http://qudt.org/vocab/unit/>\nPREFIX dcat: <http://www.w3.org/ns/dcat#>\nPREFIX hydra: <http://www.w3.org/ns/hydra/core#>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n# 工場 → サイト → エリア → ライン → 設備 の階層（設備の分類つき）\nSELECT ?factory ?site ?area ?line ?equipment ?equipmentLabel ?category WHERE {\n  ?f a s4inma:Factory ; rdfs:label ?factory ; saref:consistsOf ?s .\n  ?s a s4inma:Site ; rdfs:label ?site ; saref:consistsOf ?a .\n  ?a a s4inma:Area ; rdfs:label ?area ; saref:consistsOf ?l .\n  ?l a s4inma:WorkCenter ; xf:lineId ?line ; saref:consistsOf ?e .\n  ?e xf:equipmentId ?equipment ; rdfs:label ?equipmentLabel ; s4inma:belongsToCategory/skos:prefLabel ?category .\n  FILTER (LANG(?factory) = \"ja\" && LANG(?site) = \"ja\" && LANG(?area) = \"ja\")\n  FILTER (LANG(?equipmentLabel) = \"ja\" && LANG(?category) = \"ja\")\n}\nORDER BY ?line ?equipment\n"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('結果がある', () => pm.expect(pm.response.json().results.bindings.length).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. 02-line-a-properties（ライン A の設備ごとの計測項目・単位・最新値の取得 URL）",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{sparqlUrl}}/sparql",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "sparql"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/sparql-query"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "PREFIX xf: <https://xcp-factory.example/def#>\nPREFIX id: <https://xcp-factory.example/id/>\nPREFIX sosa: <http://www.w3.org/ns/sosa/>\nPREFIX ssn: <http://www.w3.org/ns/ssn/>\nPREFIX saref: <https://saref.etsi.org/core/>\nPREFIX s4inma: <https://saref.etsi.org/saref4inma/>\nPREFIX qudt: <http://qudt.org/schema/qudt/>\nPREFIX unit: <http://qudt.org/vocab/unit/>\nPREFIX dcat: <http://www.w3.org/ns/dcat#>\nPREFIX hydra: <http://www.w3.org/ns/hydra/core#>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n# ライン A の設備ごとの計測項目・単位・最新値の取得 URL\nSELECT ?equipment ?property ?metric ?unit ?symbol ?latestEndpoint WHERE {\n  ?line xf:lineId \"LINE-A\" ; saref:consistsOf ?e .\n  ?e xf:equipmentId ?equipment ; ssn:hasProperty ?p .\n  ?p rdfs:label ?property ; xf:metricName ?metric ; qudt:hasUnit ?u ; xf:latestEndpoint ?latestEndpoint .\n  ?u rdfs:label ?unit .\n  OPTIONAL { ?u qudt:symbol ?symbol }\n  FILTER (LANG(?property) = \"ja\" && LANG(?unit) = \"ja\")\n}\nORDER BY ?equipment ?metric\n"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('結果がある', () => pm.expect(pm.response.json().results.bindings.length).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. 03-status-codes（稼働状態を持つ設備と、値（コード）の意味）",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{sparqlUrl}}/sparql",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "sparql"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/sparql-query"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "PREFIX xf: <https://xcp-factory.example/def#>\nPREFIX id: <https://xcp-factory.example/id/>\nPREFIX sosa: <http://www.w3.org/ns/sosa/>\nPREFIX ssn: <http://www.w3.org/ns/ssn/>\nPREFIX saref: <https://saref.etsi.org/core/>\nPREFIX s4inma: <https://saref.etsi.org/saref4inma/>\nPREFIX qudt: <http://qudt.org/schema/qudt/>\nPREFIX unit: <http://qudt.org/vocab/unit/>\nPREFIX dcat: <http://www.w3.org/ns/dcat#>\nPREFIX hydra: <http://www.w3.org/ns/hydra/core#>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n# 稼働状態を持つ設備と、値（コード）の意味\nSELECT ?equipment ?code ?meaning WHERE {\n  ?e xf:equipmentId ?equipment ; ssn:hasProperty ?p .\n  ?p xf:metricName \"status\" ; xf:valueCodeList ?scheme .\n  ?c skos:inScheme ?scheme ; skos:notation ?code ; skos:prefLabel ?meaning .\n  FILTER (LANG(?meaning) = \"ja\")\n}\nORDER BY ?equipment ?code\n"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('結果がある', () => pm.expect(pm.response.json().results.bindings.length).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. 04-devices-by-standard-class（標準の上位クラス saref:Device にあたる設備（推論なし。imports.ttl の上位クラスを rdfs:subClassOf* でたどる））",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{sparqlUrl}}/sparql",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "sparql"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/sparql-query"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "PREFIX xf: <https://xcp-factory.example/def#>\nPREFIX id: <https://xcp-factory.example/id/>\nPREFIX sosa: <http://www.w3.org/ns/sosa/>\nPREFIX ssn: <http://www.w3.org/ns/ssn/>\nPREFIX saref: <https://saref.etsi.org/core/>\nPREFIX s4inma: <https://saref.etsi.org/saref4inma/>\nPREFIX qudt: <http://qudt.org/schema/qudt/>\nPREFIX unit: <http://qudt.org/vocab/unit/>\nPREFIX dcat: <http://www.w3.org/ns/dcat#>\nPREFIX hydra: <http://www.w3.org/ns/hydra/core#>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n# 標準の上位クラス saref:Device にあたる設備（推論なし。imports.ttl の上位クラスを rdfs:subClassOf* でたどる）\nSELECT ?equipment ?class ?classLabel WHERE {\n  ?e xf:equipmentId ?equipment ; a ?class .\n  ?class rdfs:subClassOf* saref:Device .\n  OPTIONAL { ?class rdfs:label ?classLabel FILTER (LANG(?classLabel) = \"ja\") }\n}\nORDER BY ?equipment\n"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('結果がある', () => pm.expect(pm.response.json().results.bindings.length).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. 05-api-templates（replay の API（データサービス）と URL テンプレート・変数）",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{sparqlUrl}}/sparql",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "sparql"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/sparql-query"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "PREFIX xf: <https://xcp-factory.example/def#>\nPREFIX id: <https://xcp-factory.example/id/>\nPREFIX sosa: <http://www.w3.org/ns/sosa/>\nPREFIX ssn: <http://www.w3.org/ns/ssn/>\nPREFIX saref: <https://saref.etsi.org/core/>\nPREFIX s4inma: <https://saref.etsi.org/saref4inma/>\nPREFIX qudt: <http://qudt.org/schema/qudt/>\nPREFIX unit: <http://qudt.org/vocab/unit/>\nPREFIX dcat: <http://www.w3.org/ns/dcat#>\nPREFIX hydra: <http://www.w3.org/ns/hydra/core#>\nPREFIX skos: <http://www.w3.org/2004/02/skos/core#>\nPREFIX prov: <http://www.w3.org/ns/prov#>\nPREFIX dcterms: <http://purl.org/dc/terms/>\nPREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nPREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n# replay の API（データサービス）と URL テンプレート・変数\nSELECT ?service ?endpointURL ?template ?variable ?required ?mapsTo WHERE {\n  ?s a dcat:DataService ; rdfs:label ?service ; dcat:endpointURL ?endpointURL .\n  { ?s xf:latestTemplate ?t } UNION { ?s xf:readingsTemplate ?t }\n  ?t hydra:template ?template ; hydra:mapping ?m .\n  ?m hydra:variable ?variable .\n  OPTIONAL { ?m hydra:required ?required }\n  OPTIONAL { ?m hydra:property ?mapsTo }\n  FILTER (LANG(?service) = \"ja\")\n}\nORDER BY ?template ?variable\n"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('結果がある', () => pm.expect(pm.response.json().results.bindings.length).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. GET で問い合わせる（?query=）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{sparqlUrl}}/sparql?query=SELECT%20(COUNT(*)%20AS%20%3Fn)%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "sparql"
+          ],
+          "query": [
+            {
+              "key": "query",
+              "value": "SELECT%20(COUNT(*)%20AS%20%3Fn)%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. 更新は拒否される（→ 403）",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{sparqlUrl}}/sparql",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "sparql"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/sparql-update"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "INSERT DATA { <urn:a> <urn:b> <urn:c> }"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 が返る', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. 構文エラー（→ 400）",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{sparqlUrl}}/sparql",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "sparql"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/sparql-query"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "SELEC * WHERE {}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('400 が返る', () => pm.response.to.have.status(400));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11. 署名なし（→ 403）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{sparqlUrl}}/status",
+          "host": [
+            "{{sparqlUrl}}"
+          ],
+          "path": [
+            "status"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/sparql-results+json"
+          }
+        ],
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 が返る（IAM 認証が効いている）', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,269 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  xcp-factorykg knowledge graph - S3 に置いた N-Quads（TTL から生成）を Lambda 上の Oxigraph が読み込み、
+  SPARQL を IAM 認証の Function URL で提供する。低コスト優先: 常時起動のグラフ DB を置かず、使った分だけ課金。
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: publish_ttl.py(SHACL 検証) -> S3 kg/current.nq -> Lambda sparql / api(メモリ上 Oxigraph, ETag で読み直し) -> Function URL(AWS_IAM)。api は replay の API も呼ぶ
+    must:
+      - 共有アカウント前提: 物理名は StackName（xcp-factorykg-<owner>）起点。xcp-factory-<owner>- で始めない（replay の後片付けの残存確認と衝突する）
+      - 読み取り専用。グラフの更新は TTL の差し替え（S3 への publish）だけで行う
+    ref:
+      - at: ../docs/実現方針.md
+        has: 方針・決定事項・懸念点
+
+Parameters:
+  CodeBucket:
+    Type: String
+    Description: Lambda コードの zip を置いたバケット（setup_aws.py が作成・指定する）
+  CodeKey:
+    Type: String
+    Description: Lambda コードの zip のキー（内容のハッシュ入り）
+  MemorySize:
+    Type: Number
+    Default: 512
+    AllowedValues: [256, 512, 1024, 2048, 4096]
+    Description: sparql Lambda のメモリ（MB）。グラフが大きいときは増やす（CPU も比例して増え、読み込みが速くなる）
+  ReplayApiFunctionName:
+    Type: String
+    Description: replay の HTTP API の Lambda 関数名（xcp-factory-<owner>-api）。REST API がこの関数の Function URL だけを呼べるようにする
+  CheckIntervalSeconds:
+    Type: Number
+    Default: 30
+    MinValue: 5
+    MaxValue: 3600
+    Description: S3 のグラフが更新されたかを確認する間隔（秒）
+
+Resources:
+  KgBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          公開中のグラフ（kg/current.nq）を置く。正本は Git の TTL で再生成できるため Retain はしない。
+          バージョニングで 1 つ前のグラフに戻せるようにし、古い版は 30 日で消す
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-graph-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-graph-versions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  KgBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref KgBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt KgBucket.Arn
+              - !Sub "${KgBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  SparqlRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: グラフの読み取りだけ（書き込み権限は持たせない）
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: read-graph
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub "${KgBucket.Arn}/kg/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt KgBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: kg/*
+
+  SparqlLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-sparql"
+      RetentionInDays: 14
+
+  SparqlFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          pyoxigraph（arm64 の配布物）を zip に同梱。コールドスタート時に S3 の N-Quads を全部メモリに読み込む。
+          Timeout は重いクエリの上限を兼ねる（懸念点 G4）。予約同時実行は設定しない（共有アカウントの枠を減らすため、G6）
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-sparql"
+      Description: xcp-factorykg のナレッジグラフ SPARQL エンドポイント（読み取り専用）
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: sparql.handler
+      MemorySize: !Ref MemorySize
+      Timeout: 30
+      Role: !GetAtt SparqlRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      LoggingConfig:
+        LogGroup: !Ref SparqlLogGroup
+      Environment:
+        Variables:
+          KG_BUCKET: !Ref KgBucket
+          KG_KEY: kg/current.nq
+          CHECK_INTERVAL: !Ref CheckIntervalSeconds
+
+  SparqlFunctionUrl:
+    Type: AWS::Lambda::Url
+    Metadata:
+      com.aws.cloudformation.Context:
+        must:
+          - AuthType は AWS_IAM のまま（NONE にすると URL を知る誰でもグラフを読める）
+    Properties:
+      TargetFunctionArn: !GetAtt SparqlFunction.Arn
+      AuthType: AWS_IAM
+
+  # ---------- REST API（ドメイン層。F/E アプリ・MCP の窓口） ----------
+  ApiRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: グラフの読み取りと、replay の HTTP API（Function URL）の呼び出しだけ
+        must:
+          - replay の呼び出しは ReplayApiFunctionName の 1 関数に限定する
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: read-graph
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Sub "${KgBucket.Arn}/kg/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt KgBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: kg/*
+        - PolicyName: call-replay-api
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunctionUrl
+                  - lambda:InvokeFunction
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ReplayApiFunctionName}"
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-api"
+      RetentionInDays: 14
+
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          決まった操作だけの窓口（11 章）。グラフは sparql と同じく S3 から自分で読み込み、Lambda 同士の呼び出しを挟まない。
+          値はグラフに書かれた replay の API だけを呼ぶ（domain.py が許可リストで制限）
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-api"
+      Description: xcp-factorykg の REST API（構造 + 値、読み取り専用）
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: api.handler
+      MemorySize: !Ref MemorySize
+      Timeout: 30
+      Role: !GetAtt ApiRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      LoggingConfig:
+        LogGroup: !Ref ApiLogGroup
+      Environment:
+        Variables:
+          KG_BUCKET: !Ref KgBucket
+          KG_KEY: kg/current.nq
+          CHECK_INTERVAL: !Ref CheckIntervalSeconds
+
+  ApiFunctionUrl:
+    Type: AWS::Lambda::Url
+    Metadata:
+      com.aws.cloudformation.Context:
+        must:
+          - AuthType は AWS_IAM のまま
+    Properties:
+      TargetFunctionArn: !GetAtt ApiFunction.Arn
+      AuthType: AWS_IAM
+
+Outputs:
+  ApiUrl:
+    Description: REST API のベース URL（/v1/…。IAM 認証、SigV4 署名・サービス名 lambda。仕様は aws/openapi.yaml）
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl
+  SparqlUrl:
+    Description: SPARQL エンドポイントのベース URL（/sparql・/status。IAM 認証、SigV4 署名・サービス名 lambda）
+    Value: !GetAtt SparqlFunctionUrl.FunctionUrl
+  GraphBucket:
+    Description: 公開中のグラフ（kg/current.nq）を置くバケット
+    Value: !Ref KgBucket
+  GraphKey:
+    Description: 公開中のグラフのキー
+    Value: kg/current.nq

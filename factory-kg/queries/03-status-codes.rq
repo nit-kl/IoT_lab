@@ -1,0 +1,8 @@
+# 稼働状態を持つ設備と、値（コード）の意味
+SELECT ?equipment ?code ?meaning WHERE {
+  ?e xf:equipmentId ?equipment ; ssn:hasProperty ?p .
+  ?p xf:metricName "status" ; xf:valueCodeList ?scheme .
+  ?c skos:inScheme ?scheme ; skos:notation ?code ; skos:prefLabel ?meaning .
+  FILTER (LANG(?meaning) = "ja")
+}
+ORDER BY ?equipment ?code

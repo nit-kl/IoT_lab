@@ -1,0 +1,306 @@
+# 生成ファイル（factory-kg/tools/vocab.py）。手で編集しない。
+# 参照している標準語彙のうち、使っている語のラベル・説明・上位クラス／上位プロパティだけを取り込んだもの。
+# 出典（利用条件は各語彙に従う。W3C: W3C Software and Document License、SAREF: ETSI、DCMI: CC BY 4.0）:
+#   sosa     https://www.w3.org/ns/sosa/  （版の記載なし）
+#   ssn      https://www.w3.org/ns/ssn/  New modular version of the SSN ontology. 
+#   saref    https://saref.etsi.org/core/  https://saref.etsi.org/core/v4.1.1/
+#   s4inma   https://saref.etsi.org/saref4inma/  https://saref.etsi.org/saref4inma/v2.1.1/
+#   qudt     http://qudt.org/schema/qudt/  http://qudt.org/schema/qudt
+#   dcat     https://www.w3.org/ns/dcat.ttl  http://www.w3.org/ns/dcat3
+#   hydra    http://www.w3.org/ns/hydra/core  （版の記載なし）
+#   skos     http://www.w3.org/2004/02/skos/core.rdf  （版の記載なし）
+#   prov     https://www.w3.org/ns/prov.ttl  http://www.w3.org/ns/prov-20130430
+#   dcterms  https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_terms.ttl  （版の記載なし）
+
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix dcmitype: <http://purl.org/dc/dcmitype/> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix geo: <http://www.opengis.net/ont/geosparql#> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix s4inma: <https://saref.etsi.org/saref4inma/> .
+@prefix saref: <https://saref.etsi.org/core/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix sosa: <http://www.w3.org/ns/sosa/> .
+@prefix ssn: <http://www.w3.org/ns/ssn/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+dcat:DataService a rdfs:Class,
+        owl:Class ;
+    rdfs:label "Data service"@en ;
+    rdfs:comment "A site or end-point providing operations related to the discovery of, access to, or processing functions on, data or related resources."@en ;
+    rdfs:subClassOf dcmitype:Service,
+        dcat:Resource .
+
+dcat:Resource a rdfs:Class,
+        owl:Class ;
+    rdfs:label "Catalogued resource"@en .
+
+sosa:FeatureOfInterest a rdfs:Class,
+        owl:Class ;
+    rdfs:label "Feature Of Interest"@en ;
+    rdfs:comment "The thing whose property is being estimated or calculated in the course of an Observation to arrive at a Result or whose property is being manipulated by an Actuator, or which is being sampled or transformed in an act of Sampling."@en .
+
+sosa:ObservableProperty a rdfs:Class,
+        owl:Class ;
+    rdfs:label "Observable Property"@en ;
+    rdfs:comment "An observable quality (property, characteristic) of a FeatureOfInterest."@en ;
+    rdfs:subClassOf ssn:Property .
+
+dcterms:created a rdf:Property,
+        owl:AnnotationProperty ;
+    rdfs:label "created",
+        "Date Created"@en ;
+    rdfs:comment "Date of creation of the resource."@en ;
+    rdfs:range rdfs:Literal ;
+    rdfs:subPropertyOf dc:date,
+        dcterms:date .
+
+dcterms:description a rdf:Property,
+        owl:AnnotationProperty,
+        owl:DatatypeProperty ;
+    rdfs:label "description",
+        "Description"@en ;
+    rdfs:comment "An account of the resource."@en ;
+    rdfs:subPropertyOf dc:description .
+
+dcterms:identifier a rdf:Property ;
+    rdfs:label "Identifier"@en ;
+    rdfs:comment "An unambiguous reference to the resource within a given context."@en ;
+    rdfs:range rdfs:Literal ;
+    rdfs:subPropertyOf dc:identifier .
+
+dcterms:source a rdf:Property,
+        owl:AnnotationProperty ;
+    rdfs:label "source",
+        "Source"@en ;
+    rdfs:comment "A related resource from which the described resource is derived."@en ;
+    rdfs:subPropertyOf dc:source,
+        dcterms:relation .
+
+qudt:hasUnit a owl:ObjectProperty ;
+    rdfs:label "has unit" ;
+    rdfs:range qudt:Unit .
+
+skos:definition a rdf:Property,
+        owl:AnnotationProperty ;
+    rdfs:label "definition"@en ;
+    rdfs:subPropertyOf skos:note .
+
+skos:hasTopConcept a rdf:Property,
+        owl:ObjectProperty ;
+    rdfs:label "has top concept"@en ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range skos:Concept .
+
+skos:notation a rdf:Property,
+        owl:DatatypeProperty ;
+    rdfs:label "notation"@en .
+
+skos:prefLabel a rdf:Property,
+        owl:AnnotationProperty ;
+    rdfs:label "preferred label"@en ;
+    rdfs:comment """skos:prefLabel, skos:altLabel and skos:hiddenLabel are pairwise
+      disjoint properties."""@en ;
+    rdfs:subPropertyOf rdfs:label .
+
+skos:topConceptOf a rdf:Property,
+        owl:ObjectProperty ;
+    rdfs:label "is top concept in scheme"@en ;
+    rdfs:domain skos:Concept ;
+    rdfs:range skos:ConceptScheme ;
+    rdfs:subPropertyOf skos:inScheme .
+
+dcat:endpointURL a rdf:Property,
+        owl:ObjectProperty ;
+    rdfs:label "service end-point"@en ;
+    rdfs:comment "The root location or primary endpoint of the service (a web-resolvable IRI)."@en ;
+    rdfs:domain dcat:DataService ;
+    rdfs:range rdfs:Resource .
+
+hydra:BasicRepresentation a hydra:VariableRepresentation ;
+    rdfs:label "BasicRepresentation" ;
+    rdfs:comment "A representation that serializes just the lexical form of a variable value, but omits language and type information." .
+
+hydra:mapping a rdf:Property ;
+    rdfs:label "mapping" ;
+    rdfs:comment "A variable-to-property mapping of the IRI template." ;
+    rdfs:domain hydra:IriTemplate ;
+    rdfs:range hydra:IriTemplateMapping .
+
+hydra:property a rdf:Property ;
+    rdfs:label "property" ;
+    rdfs:comment "A property" ;
+    rdfs:range rdf:Property .
+
+hydra:required a rdf:Property ;
+    rdfs:label "required" ;
+    rdfs:comment "True if the property is required, false otherwise." ;
+    rdfs:range xsd:boolean .
+
+hydra:template a rdf:Property ;
+    rdfs:label "template" ;
+    rdfs:comment "A templated string with placeholders. The literal's datatype indicates the template syntax; if not specified, hydra:Rfc6570Template is assumed." ;
+    rdfs:domain hydra:IriTemplate ;
+    rdfs:range hydra:Rfc6570Template .
+
+hydra:variable a rdf:Property ;
+    rdfs:label "variable" ;
+    rdfs:comment "An IRI template variable" ;
+    rdfs:domain hydra:IriTemplateMapping ;
+    rdfs:range xsd:string .
+
+hydra:variableRepresentation a rdf:Property ;
+    rdfs:label "variable representation" ;
+    rdfs:comment "The representation format to use when expanding the IRI template." ;
+    rdfs:range hydra:VariableRepresentation .
+
+prov:SoftwareAgent a owl:Class ;
+    rdfs:label "SoftwareAgent" ;
+    rdfs:subClassOf owl:Thing,
+        prov:Agent .
+
+prov:wasAttributedTo a owl:ObjectProperty ;
+    rdfs:label "wasAttributedTo" ;
+    rdfs:comment "Attribution is the ascribing of an entity to an agent."@en ;
+    rdfs:domain prov:Entity ;
+    rdfs:range prov:Agent ;
+    rdfs:subPropertyOf prov:wasInfluencedBy .
+
+ssn:hasProperty a owl:ObjectProperty ;
+    rdfs:label "has property"@en ;
+    rdfs:comment "Relation between an entity and a Property of that entity."@en .
+
+ssn:isPropertyOf a owl:ObjectProperty ;
+    rdfs:label "is property of"@en ;
+    rdfs:comment "Relation between a Property and the entity it belongs to."@en .
+
+saref:consistsOf a owl:ObjectProperty ;
+    rdfs:label "consists of"@en ;
+    rdfs:comment "A relationship indicating a composite entity that consists of other entities (e.g., a temperature/humidity sensor that consists of a temperature sensor and a humidity sensor)"@en .
+
+s4inma:Area a owl:Class ;
+    rdfs:label "Area"@en ;
+    rdfs:comment "A subclass of s4bldg:BuildingSpace used to define the physical spaces of the building. According to IEC 62264, areas are physical, geographical or logical groupings of resources determined by the site. A site can be divided in areas, whereas areas contain work centers.s."@en ;
+    rdfs:subClassOf <https://saref.etsi.org/saref4bldg/BuildingSpace> .
+
+s4inma:Factory a owl:Class ;
+    rdfs:label "Factory"@en ;
+    rdfs:comment "A subclass of s4bldg:Building specialized for the purpose of SAREF4INMA, a factory represents one or more organizations sharing a definit mission, goals and objectives which provides an output such as a product (definition taken from IEC 62264). A factory can be divided in one or multiple sites. "@en ;
+    rdfs:subClassOf <https://saref.etsi.org/saref4bldg/Building> .
+
+s4inma:ProductionEquipmentCategory a owl:Class ;
+    rdfs:label "Production equipment category"@en ;
+    rdfs:comment "A ProductionEquipmentCategory represents a certain type of production equipment, which is generally static over time. More concretely, the ProductionEquipmentCategory represents a certain model and brand of a production equipment. Each ProductionEquipmentCategory can have multiple related ProductionEquipment, which represent the actual individual machines. Moreover, each ItemCategory can be produced by multiple ProductionEquipmentCategories."@en .
+
+s4inma:Site a owl:Class ;
+    rdfs:label "Site"@en ;
+    rdfs:comment "A subclass of s4bldg:BuildingSpace used to define the physical spaces of the building. According to IEC 62264, sites are identified physical, geographical, and/or logical component groupings of a manufacturing enterprise. A factory can be divided in sites, whereas sites can be divided areas"@en ;
+    rdfs:subClassOf <https://saref.etsi.org/saref4bldg/BuildingSpace> .
+
+s4inma:WorkCenter a owl:Class ;
+    rdfs:label "Work center"@en ;
+    rdfs:comment "A subclass of s4inma:ProductionEquipment (and therefore of s4bld:PhysicalObject). It is an equipment element under an area in a role-based equipment hierarchy that performs production, storage or material movement (definition taken from IEC 62264). An Area contains work centers."@en ;
+    rdfs:subClassOf s4inma:ProductionEquipment .
+
+s4inma:belongsToCategory a owl:ObjectProperty ;
+    rdfs:label "belongs to category"@en ;
+    rdfs:comment "Link between an entity and its category"@en .
+
+dcterms:date a rdf:Property ;
+    rdfs:label "Date"@en ;
+    rdfs:range rdfs:Literal ;
+    rdfs:subPropertyOf dc:date .
+
+dcterms:relation a rdf:Property ;
+    rdfs:label "Relation"@en ;
+    rdfs:subPropertyOf dc:relation .
+
+qudt:Aspect a qudt:AspectClass,
+        owl:Class ;
+    rdfs:label "QUDT Aspect" .
+
+qudt:Concept a owl:Class ;
+    rdfs:label "QUDT Concept" .
+
+qudt:Unit a owl:Class ;
+    rdfs:label "Unit" ;
+    rdfs:subClassOf qudt:Concept,
+        qudt:Verifiable .
+
+qudt:Verifiable a qudt:AspectClass,
+        owl:Class ;
+    rdfs:label "Verifiable" ;
+    rdfs:subClassOf qudt:Aspect .
+
+geo:SpatialObject a owl:Class ;
+    rdfs:label "SpatialObject"@en .
+
+rdfs:label a owl:AnnotationProperty .
+
+owl:Thing a owl:Class .
+
+skos:inScheme a rdf:Property,
+        owl:ObjectProperty ;
+    rdfs:label "is in scheme"@en ;
+    rdfs:range skos:ConceptScheme .
+
+skos:note a rdf:Property,
+        owl:AnnotationProperty ;
+    rdfs:label "note"@en .
+
+prov:Entity a owl:Class ;
+    rdfs:label "Entity" .
+
+prov:wasInfluencedBy a owl:ObjectProperty ;
+    rdfs:label "wasInfluencedBy" .
+
+ssn:Property a owl:Class ;
+    rdfs:label "Property"@en .
+
+saref:Device a owl:Class ;
+    rdfs:label "Device"@en ;
+    rdfs:comment "A tangible object designed to accomplish a particular task. In order to accomplish this task, the device performs one or more functions. An instance of saref:Device represents one specific real world entity."@en ;
+    rdfs:subClassOf saref:FeatureOfInterest,
+        <https://saref.etsi.org/saref4syst/System> .
+
+saref:FeatureOfInterest a owl:Class ;
+    rdfs:label "Feature of interest"@en .
+
+<https://saref.etsi.org/saref4bldg/Building> a owl:Class ;
+    rdfs:label "Building"@en .
+
+s4inma:ProductionEquipment a owl:Class ;
+    rdfs:label "ProductionEquipment"@en ;
+    rdfs:comment "A production equipment is a specialization of a saref:Device and s4bldg:PhysicalObject that can produce items in a manufacturing process. This class represents an individual production equipment device and includes their specification in terms of functions, states and services. Different types of machines can be defined under this class as needed, for example, LaserCuttingMachine (i.e., a type of production equipment to cut steel material), MillingMachine (i.e., to drill holes in steel material), MouldingMachine (i.e., to mold liquid material, such as iron or plastic, and let it harden in a certain shape), WeldingMachine (i.e., join parts of material, such as steel, together), etc."@en ;
+    rdfs:subClassOf geo:SpatialObject,
+        saref:Device .
+
+<https://saref.etsi.org/saref4syst/System> a owl:Class .
+
+skos:Concept a owl:Class ;
+    rdfs:label "Concept"@en .
+
+hydra:IriTemplate a hydra:Class ;
+    rdfs:label "IRI Template" ;
+    rdfs:comment "The class of IRI templates." .
+
+hydra:IriTemplateMapping a hydra:Class ;
+    rdfs:label "IriTemplateMapping" ;
+    rdfs:comment "A mapping from an IRI template variable to a property." .
+
+prov:Agent a owl:Class ;
+    rdfs:label "Agent" .
+
+<https://saref.etsi.org/saref4bldg/BuildingSpace> a owl:Class ;
+    rdfs:label "Building space"@en .
+
+skos:ConceptScheme a owl:Class ;
+    rdfs:label "Concept Scheme"@en ;
+    rdfs:comment "SKOS concept scheme can be viewed as an aggregation of one or more SKOS concepts."@en .
+

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工場ナレッジグラフ</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>工場ナレッジグラフ</h1>
+    <div class="status" id="replay-status" title="replay（工場 CSV リプレイ）の状態">replay: 読み込み中…</div>
+    <div class="status" id="kg-status" title="ナレッジグラフ（SPARQL エンドポイント）の状態">KG: 読み込み中…</div>
+    <div class="spacer"></div>
+    <label class="auto" title="画面を表示している間だけ、1 分ごとに replay の値を取り直す">
+      <input type="checkbox" id="auto-refresh" checked> 自動更新（表示中のみ・1 分ごと）
+    </label>
+    <button id="refresh" type="button">更新</button>
+  </header>
+
+  <div class="toolbar">
+    <input id="search" type="search" placeholder="設備 ID・名前で検索（例: CNC-01、コンプレッサ）">
+    <label>ライン <select id="line-filter"><option value="">すべて</option></select></label>
+    <label>分類 <select id="category-filter"><option value="">すべて</option></select></label>
+    <label>時系列 <select id="minutes">
+      <option value="30">直近 30 分</option>
+      <option value="60" selected>直近 60 分</option>
+      <option value="180">直近 3 時間</option>
+      <option value="720">直近 12 時間</option>
+      <option value="1440">直近 24 時間</option>
+    </select></label>
+    <span class="hint">時系列の範囲は反映時刻（60 倍速なら 60 分 = CSV 上の 60 時間）</span>
+  </div>
+
+  <main class="layout">
+    <section class="graph-pane">
+      <div id="graph" aria-label="ナレッジグラフ"></div>
+      <div class="legend" id="legend"></div>
+      <p class="graph-hint">設備をクリックすると計測項目を展開します。ダブルクリックで全体表示に戻ります。</p>
+    </section>
+    <section class="detail-pane" id="detail">
+      <p class="placeholder">左のグラフでノードを選んでください。</p>
+    </section>
+  </main>
+
+  <details class="sparql-console">
+    <summary>SPARQL を直接実行する（上級者向け）</summary>
+    <p class="hint">PREFIX（xf: s4inma: sosa: ssn: saref: qudt: unit: dcat: hydra: skos: rdfs: など）は自動で付きます。更新はできません。</p>
+    <textarea id="sparql-text" rows="6" spellcheck="false">SELECT ?equipment ?label WHERE {
+  ?e xf:equipmentId ?equipment ; rdfs:label ?label .
+  FILTER (LANG(?label) = "ja")
+} ORDER BY ?equipment</textarea>
+    <div><button id="sparql-run" type="button">実行</button> <span id="sparql-info" class="hint"></span></div>
+    <div class="table-wrap"><table id="sparql-result"></table></div>
+  </details>
+
+  <div id="error" class="error" hidden></div>
+</body>
+</html>

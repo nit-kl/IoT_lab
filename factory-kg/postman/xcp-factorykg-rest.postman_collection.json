@@ -1,0 +1,542 @@
+{
+  "info": {
+    "name": "xcp-factorykg REST API",
+    "description": "工場ナレッジグラフの REST API（構造 + replay の値、読み取り専用）。仕様は aws/openapi.yaml。\n\nEnvironment は SPARQL のコレクションと共通（`python tools/postman.py env --owner <owner>`）。\nこのファイルは `python tools/postman.py collection` で生成している（手で編集しない）。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "awsv4",
+    "awsv4": [
+      {
+        "key": "accessKey",
+        "value": "{{accessKeyId}}",
+        "type": "string"
+      },
+      {
+        "key": "secretKey",
+        "value": "{{secretAccessKey}}",
+        "type": "string"
+      },
+      {
+        "key": "sessionToken",
+        "value": "{{sessionToken}}",
+        "type": "string"
+      },
+      {
+        "key": "region",
+        "value": "{{region}}",
+        "type": "string"
+      },
+      {
+        "key": "service",
+        "value": "lambda",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "1. 工場の構造",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/factory",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "factory"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('工場がある', () => pm.expect(pm.response.json().factories.length).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. 設備の一覧（稼働状態つき）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/equipment",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "equipment"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('設備がある', () => pm.expect(pm.response.json().count).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. 設備の一覧（CNC 加工機だけ）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/equipment?category=cnc",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "equipment"
+          ],
+          "query": [
+            {
+              "key": "category",
+              "value": "cnc"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. 設備の詳細（CNC-01）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/equipment/CNC-01",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "equipment",
+            "CNC-01"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('計測項目と最新値', () => pm.expect(pm.response.json().properties[0]).to.have.property('latest'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. 計測項目（CNC-01 の稼働状態）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/equipment/CNC-01/properties/status",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "equipment",
+            "CNC-01",
+            "properties",
+            "status"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('コード表つき', () => pm.expect(pm.response.json().codes.values.length).to.eql(3));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. 時系列（CSV 上 14:00〜14:40 の主軸負荷）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/equipment/CNC-01/properties/spindle_load/readings?source_from=2026-10-01T14:00&source_to=2026-10-01T14:40&limit=10",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "equipment",
+            "CNC-01",
+            "properties",
+            "spindle_load",
+            "readings"
+          ],
+          "query": [
+            {
+              "key": "source_from",
+              "value": "2026-10-01T14:00"
+            },
+            {
+              "key": "source_to",
+              "value": "2026-10-01T14:40"
+            },
+            {
+              "key": "limit",
+              "value": "10"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. 時系列の要約（PRESS-01 の稼働状態・1 日）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/equipment/PRESS-01/properties/status/readings/summary?source_from=2026-10-01T00:00&source_to=2026-10-01T23:59",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "equipment",
+            "PRESS-01",
+            "properties",
+            "status",
+            "readings",
+            "summary"
+          ],
+          "query": [
+            {
+              "key": "source_from",
+              "value": "2026-10-01T00:00"
+            },
+            {
+              "key": "source_to",
+              "value": "2026-10-01T23:59"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "description": "状態ごとの時間（分）と、状態が変わった時刻を返す（AI エージェント向け）"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. 時系列の要約（CNC-01 の主軸負荷・14 時台）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/equipment/CNC-01/properties/spindle_load/readings/summary?source_from=2026-10-01T14:00&source_to=2026-10-01T15:00",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "equipment",
+            "CNC-01",
+            "properties",
+            "spindle_load",
+            "readings",
+            "summary"
+          ],
+          "query": [
+            {
+              "key": "source_from",
+              "value": "2026-10-01T14:00"
+            },
+            {
+              "key": "source_to",
+              "value": "2026-10-01T15:00"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. コード表（稼働状態）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/codes/equipment-status",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "codes",
+            "equipment-status"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. 検索（コンプレッサ）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/search?q=コンプレッサ",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "search"
+          ],
+          "query": [
+            {
+              "key": "q",
+              "value": "コンプレッサ"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11. 状態（グラフ・replay）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/status",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "status"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12. 存在しない設備（→ 404）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/equipment/NOPE-01",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "equipment",
+            "NOPE-01"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('404 が返る', () => pm.response.to.have.status(404));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13. 署名なし（→ 403）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{apiUrl}}/v1/factory",
+          "host": [
+            "{{apiUrl}}"
+          ],
+          "path": [
+            "v1",
+            "factory"
+          ]
+        },
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('403 が返る', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

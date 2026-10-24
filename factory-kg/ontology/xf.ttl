@@ -1,0 +1,88 @@
+# xf: xcp-factory の拡張語彙。標準オントロジーにない最小限の語だけを定義し、標準に紐づける。
+# 方針: 工場・設備の分類は SAREF4INMA、計測項目は SOSA/SSN、単位は QUDT、API は DCAT + Hydra、コード表は SKOS
+# （役割分担は ontology/README.md）。IRI は仮ドメイン（決定事項 7）。
+
+@prefix xf:      <https://xcp-factory.example/def#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix dcat:    <http://www.w3.org/ns/dcat#> .
+@prefix hydra:   <http://www.w3.org/ns/hydra/core#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix sosa:    <http://www.w3.org/ns/sosa/> .
+@prefix s4inma:  <https://saref.etsi.org/saref4inma/> .
+
+<https://xcp-factory.example/def#>
+    a owl:Ontology ;
+    rdfs:label "xcp-factory 拡張語彙"@ja , "xcp-factory extension vocabulary"@en ;
+    dcterms:description "工場 CSV リプレイ基盤のデータを標準オントロジーで表すための最小限の拡張。"@ja ;
+    owl:versionInfo "0.1" .
+
+# ---------- 識別子（API のパラメータに使う値） ----------
+
+xf:equipmentId
+    a owl:DatatypeProperty ;
+    rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "設備 ID"@ja , "equipment ID"@en ;
+    rdfs:comment "replay の API・CSV で使う設備 ID（例: CNC-01）。API の equipment パラメータの値。"@ja ;
+    rdfs:range xsd:string .
+
+xf:lineId
+    a owl:DatatypeProperty ;
+    rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "ライン ID"@ja , "line ID"@en ;
+    rdfs:comment "replay の API・CSV で使うライン ID（例: LINE-A）。s4inma:WorkCenter に付ける。"@ja ;
+    rdfs:domain s4inma:WorkCenter ;
+    rdfs:range xsd:string .
+
+xf:metricName
+    a owl:DatatypeProperty ;
+    rdfs:label "メトリクス名"@ja , "metric name"@en ;
+    rdfs:comment "replay の API・CSV で使う計測項目名（例: spindle_load）。API の metric パラメータの値。"@ja ;
+    rdfs:domain sosa:ObservableProperty ;
+    rdfs:range xsd:string .
+
+# ---------- API への参照 ----------
+
+xf:apiService
+    a owl:ObjectProperty ;
+    rdfs:label "提供 API"@ja , "served by API"@en ;
+    rdfs:comment "この計測項目の値を返すデータサービス（replay の HTTP API）。"@ja ;
+    rdfs:domain sosa:ObservableProperty ;
+    rdfs:range dcat:DataService .
+
+xf:latestEndpoint
+    a owl:ObjectProperty ;
+    rdfs:label "最新値の取得 URL"@ja , "latest value endpoint"@en ;
+    rdfs:comment "この計測項目の最新値を返す URL（IAM 認証。SigV4 署名、サービス名 lambda）。xf:latestTemplate を設備 ID・メトリクス名で展開したもの。"@ja ;
+    rdfs:domain sosa:ObservableProperty .
+
+xf:readingsEndpoint
+    a owl:ObjectProperty ;
+    rdfs:label "時系列の取得 URL"@ja , "readings endpoint"@en ;
+    rdfs:comment "この計測項目の時系列を返す URL（期間などの指定なし）。期間や件数を指定するときは xf:readingsTemplate を使う。"@ja ;
+    rdfs:domain sosa:ObservableProperty .
+
+xf:latestTemplate
+    a owl:ObjectProperty ;
+    rdfs:label "最新値 URL テンプレート"@ja , "latest value IRI template"@en ;
+    rdfs:comment "最新値を取得する URL のテンプレート（dcat:endpointURL からの相対）。"@ja ;
+    rdfs:domain dcat:DataService ;
+    rdfs:range hydra:IriTemplate .
+
+xf:readingsTemplate
+    a owl:ObjectProperty ;
+    rdfs:label "時系列 URL テンプレート"@ja , "readings IRI template"@en ;
+    rdfs:comment "時系列を取得する URL のテンプレート（dcat:endpointURL からの相対）。期間・件数・ページの変数を持つ。"@ja ;
+    rdfs:domain dcat:DataService ;
+    rdfs:range hydra:IriTemplate .
+
+# ---------- 値の意味 ----------
+
+xf:valueCodeList
+    a owl:ObjectProperty ;
+    rdfs:label "値のコード表"@ja , "value code list"@en ;
+    rdfs:comment "値がコード（例: 0=停止）である計測項目の、コードの意味を定めたコード表。各コードの skos:notation が API の value と一致する。"@ja ;
+    rdfs:domain sosa:ObservableProperty ;
+    rdfs:range skos:ConceptScheme .

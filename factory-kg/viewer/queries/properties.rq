@@ -1,0 +1,17 @@
+# ビューア: 計測項目（単位・値を取りに行く URL・コード表）
+SELECT ?prop ?equipment ?equipmentId ?metric ?label ?comment ?unit ?unitLabel ?symbol ?latest ?readings ?service ?codes WHERE {
+  ?prop a sosa:ObservableProperty ;
+        ssn:isPropertyOf ?equipment ;
+        xf:metricName ?metric ;
+        qudt:hasUnit ?unit ;
+        xf:apiService ?service ;
+        xf:latestEndpoint ?latest ;
+        xf:readingsEndpoint ?readings .
+  ?equipment xf:equipmentId ?equipmentId .
+  OPTIONAL { ?prop rdfs:label ?label FILTER (LANG(?label) = "ja") }
+  OPTIONAL { ?prop rdfs:comment ?comment }
+  OPTIONAL { ?unit rdfs:label ?unitLabel FILTER (LANG(?unitLabel) = "ja") }
+  OPTIONAL { ?unit qudt:symbol ?symbol }
+  OPTIONAL { ?prop xf:valueCodeList ?codes }
+}
+ORDER BY ?equipmentId ?metric
