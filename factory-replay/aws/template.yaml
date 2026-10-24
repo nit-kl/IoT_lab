@@ -1,0 +1,528 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  xcp-factory CSV replay - S3 に置いた工場 CSV を Aurora Serverless v2 (PostgreSQL) に少しずつ反映する検証基盤。
+  低コスト優先: Aurora は最小 0 ACU で自動一時停止し、Data API で接続するため NAT や VPC Lambda を使わない。
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: S3(incoming/*.csv) -> Aurora aws_s3 import -> staging_readings -> replayer -> readings; 取得/リセットは Function URL (後続ステップで追加)
+    must:
+      - 共有アカウント前提: 物理名はすべて StackName (xcp-factory-<owner>) 起点にする
+      - DB へは Data API のみで接続。SG の ingress は開けない
+    ref:
+      - at: ../../docs/実現方針.md
+        has: 全体方針・テーブル設計・コスト見積り
+
+Parameters:
+  # オーナー名はスタック名（xcp-factory-<owner>）とスタックタグ（Owner）で渡す
+  VpcCidr:
+    Type: String
+    Default: 10.80.0.0/16
+    AllowedPattern: "^(\\d{1,3}\\.){3}\\d{1,3}/(1[6-9]|2[0-4])$"
+    Description: このスタック専用 VPC の CIDR（/16〜/24）
+  MaxAcu:
+    Type: Number
+    Default: 4
+    AllowedValues: [1, 2, 4, 8]
+    Description: Aurora の最大 ACU。大きな CSV 取り込み時の費用上振れを抑える上限
+  AutoPauseSeconds:
+    Type: Number
+    Default: 300
+    MinValue: 300
+    MaxValue: 86400
+    Description: 接続がなくなってから Aurora が一時停止するまでの秒数
+  CodeBucket:
+    Type: String
+    Description: Lambda コードの zip を置いたバケット（setup_aws.py が作成・指定する）
+  CodeKey:
+    Type: String
+    Description: Lambda コードの zip のキー（内容のハッシュ入り。コードが変わると Lambda が更新される）
+  BatchRows:
+    Type: Number
+    Default: 50000
+    MinValue: 1000
+    MaxValue: 200000
+    Description: replayer が 1 回の SQL で写す最大行数
+
+Resources:
+  # ---------- ネットワーク（DB 専用。インターネット出口なし） ----------
+  Vpc:
+    Type: AWS::EC2::VPC
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Aurora の配置先。IGW/NAT を作らないので固定費ゼロ。既存 VPC 流用は S3 エンドポイントの重複衝突を避けるため見送り
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 2, 8]]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-a"
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 2, 8]]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-b"
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+
+  SubnetARouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetA
+      RouteTableId: !Ref RouteTable
+
+  SubnetBRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetB
+      RouteTableId: !Ref RouteTable
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: aws_s3.table_import_from_s3 で Aurora が S3 を読むための経路。Gateway 型は無料
+        must:
+          - ポリシーはデータバケットの読み取りに限定
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      RouteTableIds:
+        - !Ref RouteTable
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+            Resource:
+              - !GetAtt DataBucket.Arn
+              - !Sub "${DataBucket.Arn}/*"
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Aurora for xcp-factory replay (Data API only, no ingress)
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "${AWS::StackName} Aurora subnets"
+      SubnetIds:
+        - !Ref SubnetA
+        - !Ref SubnetB
+
+  # ---------- CSV 置き場 ----------
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: LoaderInvokePermission
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          incoming/*.csv を置く。中身は generate_csv.py で再生成できる検証データのため
+          Retain/バージョニングはせず、teardown で空にして削除する
+        must:
+          - BucketName の形式を変えるなら LoaderInvokePermission の SourceArn も合わせる（循環参照回避のため文字列で組み立てている）
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-data-${AWS::AccountId}"
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt LoaderFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: incoming/
+                  - Name: suffix
+                    Value: .csv
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  DataBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DataBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt DataBucket.Arn
+              - !Sub "${DataBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  # ---------- Aurora Serverless v2 ----------
+  S3ImportRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Aurora の s3Import 機能が CSV を読むためのロール
+        must:
+          - 読めるのは incoming/ 配下のみ
+          - バケット ARN は文字列で組み立てる（DataBucket を参照すると DataBucket→Loader→DbCluster→本ロールで循環する）
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${AWS::StackName}"
+      Policies:
+        - PolicyName: read-incoming-csv
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${AWS::StackName}-data-${AWS::AccountId}/incoming/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${AWS::StackName}-data-${AWS::AccountId}"
+                Condition:
+                  StringLike:
+                    s3:prefix: incoming/*
+
+  DbCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          最小 0 ACU + 自動一時停止で、リプレイしていない間はストレージ代のみ。
+          Data API を有効にして Lambda/CLI から VPC 外で接続する。
+          中身は CSV から再生成できるため Snapshot/Retain はしない（teardown で課金を残さない）。
+          EngineVersion は省略しリージョン既定（0 ACU 対応版）を使う
+        must:
+          - DBClusterIdentifier は StackName と一致させる（S3ImportRole の SourceArn が依存）
+          - MinCapacity は 0 のまま（コスト前提）
+        mutability:
+          ServerlessV2ScalingConfiguration: free-to-tune
+    Properties:
+      DBClusterIdentifier: !Ref AWS::StackName
+      Engine: aurora-postgresql
+      DatabaseName: factory
+      MasterUsername: factory_admin
+      ManageMasterUserPassword: true
+      EnableHttpEndpoint: true
+      StorageEncrypted: true
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref DbSecurityGroup
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0
+        MaxCapacity: !Ref MaxAcu
+        SecondsUntilAutoPause: !Ref AutoPauseSeconds
+      AssociatedRoles:
+        - RoleArn: !GetAtt S3ImportRole.Arn
+          FeatureName: s3Import
+
+  DbInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBClusterIdentifier: !Ref DbCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+
+  # ---------- 少しずつ反映（loader / replayer / 1 分ごとのスケジュール） ----------
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: loader/replayer 共通。DB へは Data API のみ、S3 の CSV は DB が直接読むので S3 権限は不要
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: data-api
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - rds-data:ExecuteStatement
+                  - rds-data:BatchExecuteStatement
+                Resource: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${AWS::StackName}"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !GetAtt DbCluster.MasterUserSecret.SecretArn
+        - PolicyName: toggle-schedule
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - scheduler:GetSchedule
+                  - scheduler:UpdateSchedule
+                Resource: !Sub "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/${AWS::StackName}-replayer"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt SchedulerRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: scheduler.amazonaws.com
+
+  LoaderLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-loader"
+      RetentionInDays: 14
+
+  LoaderFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: S3 イベントで起動し start_replay() を呼ぶだけ。大きい CSV でも DB 側で取り込むため 256MB で足りる
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-loader"
+      Description: incoming/*.csv を DB に取り込みリプレイを開始する
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: loader.handler
+      MemorySize: 256
+      Timeout: 300
+      Role: !GetAtt FunctionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      LoggingConfig:
+        LogGroup: !Ref LoaderLogGroup
+      Environment:
+        Variables:
+          CLUSTER_ARN: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DbCluster}"
+          SECRET_ARN: !GetAtt DbCluster.MasterUserSecret.SecretArn
+          DATABASE: factory
+          SCHEDULE_NAME: !Sub "${AWS::StackName}-replayer"
+
+  LoaderInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: 失敗は replay_state.status=error とログで分かる。取り込みは冪等なので 1 回だけ再試行（DLQ は置かない）
+    Properties:
+      FunctionName: !Ref LoaderFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 1
+
+  LoaderInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LoaderFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub "arn:${AWS::Partition}:s3:::${AWS::StackName}-data-${AWS::AccountId}"
+
+  ReplayerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-replayer"
+      RetentionInDays: 14
+
+  ReplayerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-replayer"
+      Description: staging_readings から readings へ経過時間ぶんの行を写す
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: replayer.handler
+      MemorySize: 256
+      Timeout: 120
+      Role: !GetAtt FunctionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      LoggingConfig:
+        LogGroup: !Ref ReplayerLogGroup
+      Environment:
+        Variables:
+          CLUSTER_ARN: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DbCluster}"
+          SECRET_ARN: !GetAtt DbCluster.MasterUserSecret.SecretArn
+          DATABASE: factory
+          SCHEDULE_NAME: !Sub "${AWS::StackName}-replayer"
+          BATCH_ROWS: !Ref BatchRows
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: invoke-replayer
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-replayer"
+
+  ReplaySchedule:
+    Type: AWS::Scheduler::Schedule
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          loader が有効化し、replayer が完了時に無効化する。止まっている間は起動されず DB も一時停止できる。
+          State は Lambda が書き換えるため、このリソースを更新するとスタック上の DISABLED に戻る（次の CSV 投入で再有効化される）
+        must:
+          - Name は FunctionRole の toggle-schedule ポリシーと Lambda の SCHEDULE_NAME に一致させる
+    Properties:
+      Name: !Sub "${AWS::StackName}-replayer"
+      Description: xcp-factory replayer を 1 分ごとに起動する
+      ScheduleExpression: rate(1 minute)
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: DISABLED
+      Target:
+        Arn: !GetAtt ReplayerFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        RetryPolicy:
+          MaximumRetryAttempts: 0
+          MaximumEventAgeInSeconds: 60
+
+  # ---------- HTTP API（Lambda Function URL、IAM 認証） ----------
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-api"
+      RetentionInDays: 14
+
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          取得 API。API Gateway は使わず Function URL で無料化。
+          FunctionRole を共用するのは、ステップ 5 のリセットでスケジュール操作が要るため
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-api"
+      Description: xcp-factory の DB を JSON で返す HTTP API
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: api.handler
+      MemorySize: 512
+      Timeout: 30
+      Role: !GetAtt FunctionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      LoggingConfig:
+        LogGroup: !Ref ApiLogGroup
+      Environment:
+        Variables:
+          CLUSTER_ARN: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DbCluster}"
+          SECRET_ARN: !GetAtt DbCluster.MasterUserSecret.SecretArn
+          DATABASE: factory
+          SCHEDULE_NAME: !Sub "${AWS::StackName}-replayer"
+
+  ApiFunctionUrl:
+    Type: AWS::Lambda::Url
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: 同一アカウントの IAM 利用者が SigV4 署名で呼ぶ（CLI / Postman）。リソースポリシーは付けない
+        must:
+          - AuthType は AWS_IAM のまま（NONE にすると URL を知る誰でも DB を読める）
+    Properties:
+      TargetFunctionArn: !GetAtt ApiFunction.Arn
+      AuthType: AWS_IAM
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API の URL（IAM 認証。SigV4 署名、サービス名 lambda で呼ぶ）
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl
+  BucketName:
+    Description: CSV をアップロードするバケット（incoming/ 配下に置く）
+    Value: !Ref DataBucket
+  ClusterArn:
+    Description: Data API の resourceArn
+    Value: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DbCluster}"
+  SecretArn:
+    Description: Data API の secretArn（RDS 管理のマスターユーザー認証情報）
+    Value: !GetAtt DbCluster.MasterUserSecret.SecretArn
+  DatabaseName:
+    Description: データベース名
+    Value: factory
+  ScheduleName:
+    Description: replayer を起動するスケジュール（EventBridge Scheduler、default グループ）
+    Value: !Ref ReplaySchedule
