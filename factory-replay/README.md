@@ -46,6 +46,38 @@ aws s3 cp data/factory_sample.csv s3://xcp-factory-<owner>-data-<アカウント
 - 新しい CSV を置くと、その時点で最初からやり直しになる
 - 確認手順は [docs/作業手順.md](../docs/作業手順.md) の「4. ステップ 3」
 
+## ③ HTTP API でデータを取得
+
+Lambda Function URL（`xcp-factory-<owner>-api`、IAM 認証）。URL は `setup_aws.py` の最後に表示される。
+SigV4 署名（サービス名 `lambda`）が必要で、署名なしは 403。時刻はすべて日本時間（+09:00）で返す。
+
+| エンドポイント | 内容 | 主なパラメータ |
+|---|---|---|
+| `GET /status` | リプレイの進み具合（状態・進捗 %・CSV 上の現在位置・完了見込み） | なし |
+| `GET /latest` | 設備・メトリクスごとの最新値（直近 5,000 行から探す） | `equipment`, `metric`, `line` |
+| `GET /readings` | 時系列データ（seq 順） | `equipment`, `metric`, `line`, 範囲, `limit`（既定 1,000・上限 5,000）, `next` |
+| `GET /summary` | 設備・メトリクスごとの件数・平均・最小・最大、稼働率・停止分・異常停止分 | `equipment`, `line`, 範囲（省略時は直近 60 分） |
+
+範囲の指定（組み合わせ可）:
+
+| パラメータ | 意味 |
+|---|---|
+| `minutes` | 反映時刻（`ts`）で直近 N 分 |
+| `from` / `to` | 反映時刻（`ts`）の範囲 |
+| `source_from` / `source_to` | CSV 上の時刻（`source_ts`）の範囲 |
+
+時刻はタイムゾーンを省略すると日本時間（例: `2026-10-01T14:00`）。`/readings` は続きがあると `next` が返るので、
+次のリクエストに `next=<値>` を付けると続きが取れる（`null` なら最後）。
+
+呼び方:
+
+| 手段 | 使い方 |
+|---|---|
+| Postman | `postman/xcp-factory.postman_collection.json` をインポートし、`python tools/postman_env.py --owner <owner>` で作った Environment をインポート |
+| CLI | `python tools/cli.py --owner <owner> status`（`latest` / `readings` / `summary`。`--help` で一覧） |
+
+詳しい確認手順は [docs/作業手順.md](../docs/作業手順.md) の「5. ステップ 4」。
+
 - テーブル定義は `aws/schema.sql`。`setup_aws.py` が Data API で作成する（何度実行しても同じ結果）
 - 使っていない間の費用は Aurora のストレージ代（1 GB 未満なら月 1 ドル未満）とシークレット代（月 $0.40）程度。
   検証が終わったら `teardown_aws.py` で削除する

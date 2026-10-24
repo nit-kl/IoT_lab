@@ -459,7 +459,58 @@ Resources:
           MaximumRetryAttempts: 0
           MaximumEventAgeInSeconds: 60
 
+  # ---------- HTTP API（Lambda Function URL、IAM 認証） ----------
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-api"
+      RetentionInDays: 14
+
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          取得 API。API Gateway は使わず Function URL で無料化。
+          FunctionRole を共用するのは、ステップ 5 のリセットでスケジュール操作が要るため
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-api"
+      Description: xcp-factory の DB を JSON で返す HTTP API
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: api.handler
+      MemorySize: 512
+      Timeout: 30
+      Role: !GetAtt FunctionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      LoggingConfig:
+        LogGroup: !Ref ApiLogGroup
+      Environment:
+        Variables:
+          CLUSTER_ARN: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DbCluster}"
+          SECRET_ARN: !GetAtt DbCluster.MasterUserSecret.SecretArn
+          DATABASE: factory
+          SCHEDULE_NAME: !Sub "${AWS::StackName}-replayer"
+
+  ApiFunctionUrl:
+    Type: AWS::Lambda::Url
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: 同一アカウントの IAM 利用者が SigV4 署名で呼ぶ（CLI / Postman）。リソースポリシーは付けない
+        must:
+          - AuthType は AWS_IAM のまま（NONE にすると URL を知る誰でも DB を読める）
+    Properties:
+      TargetFunctionArn: !GetAtt ApiFunction.Arn
+      AuthType: AWS_IAM
+
 Outputs:
+  ApiUrl:
+    Description: HTTP API の URL（IAM 認証。SigV4 署名、サービス名 lambda で呼ぶ）
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl
   BucketName:
     Description: CSV をアップロードするバケット（incoming/ 配下に置く）
     Value: !Ref DataBucket

@@ -156,6 +156,7 @@ def main():
     print(f"スタック名 : {name}")
     print(f"バケット   : {out['BucketName']}")
     print(f"クラスター : {out['ClusterArn']}")
+    print(f"HTTP API   : {out['ApiUrl']}")
     print()
     print("CSV をアップロードすると反映が始まります:")
     print(f"  aws s3 cp data/factory_sample.csv s3://{out['BucketName']}/incoming/")

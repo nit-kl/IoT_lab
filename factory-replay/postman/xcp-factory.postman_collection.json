@@ -1,0 +1,212 @@
+{
+  "info": {
+    "name": "xcp-factory HTTP API",
+    "description": "工場 CSV リプレイの HTTP API（Lambda Function URL、IAM 認証）。\n\n使い方:\n1. `python tools/postman_env.py --owner <owner>` で Environment ファイルを作り、インポートする\n2. 右上の Environment で `xcp-factory-<owner>` を選ぶ\n3. 各リクエストを Send\n\n認証はコレクション全体に AWS Signature（サービス名 lambda）を設定済み。403 で token expired などと出たら、postman_env.py を再実行して Environment をインポートし直す。\n\n時刻のパラメータはタイムゾーンを省略すると日本時間として扱う（クエリに + を書くと空白に化けるため、+09:00 は付けない）。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "awsv4",
+    "awsv4": [
+      { "key": "accessKey", "value": "{{accessKeyId}}", "type": "string" },
+      { "key": "secretKey", "value": "{{secretAccessKey}}", "type": "string" },
+      { "key": "sessionToken", "value": "{{sessionToken}}", "type": "string" },
+      { "key": "region", "value": "{{region}}", "type": "string" },
+      { "key": "service", "value": "lambda", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "next", "value": "0" }
+  ],
+  "item": [
+    {
+      "name": "1. status（リプレイの進み具合）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('status がある', () => pm.expect(pm.response.json()).to.have.property('status'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/status", "host": ["{{baseUrl}}"], "path": ["status"] }
+      }
+    },
+    {
+      "name": "2. latest（全設備の最新値）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('1 件以上ある', () => pm.expect(pm.response.json().count).to.be.above(0));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/latest", "host": ["{{baseUrl}}"], "path": ["latest"] }
+      }
+    },
+    {
+      "name": "3. latest（CNC-01 だけ）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/latest?equipment=CNC-01",
+          "host": ["{{baseUrl}}"],
+          "path": ["latest"],
+          "query": [{ "key": "equipment", "value": "CNC-01" }]
+        }
+      }
+    },
+    {
+      "name": "4. readings（CSV 上 14:00〜14:40 の CNC 主軸負荷・1 ページ目）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('next', body.next || '0');",
+              "pm.test('続きがある（next が入る）', () => pm.expect(body.next).to.be.a('string'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/readings?equipment=CNC-01&metric=spindle_load&source_from=2026-10-01T14:00&source_to=2026-10-01T14:40&limit=10",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            { "key": "equipment", "value": "CNC-01" },
+            { "key": "metric", "value": "spindle_load" },
+            { "key": "source_from", "value": "2026-10-01T14:00" },
+            { "key": "source_to", "value": "2026-10-01T14:40" },
+            { "key": "limit", "value": "10" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "5. readings（4 の続きのページ）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('next', body.next || '0');"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "description": "4 を実行すると next が保存される。続けて Send すると次のページを取る（next が空になったら最後）。",
+        "url": {
+          "raw": "{{baseUrl}}/readings?equipment=CNC-01&metric=spindle_load&source_from=2026-10-01T14:00&source_to=2026-10-01T14:40&limit=10&next={{next}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            { "key": "equipment", "value": "CNC-01" },
+            { "key": "metric", "value": "spindle_load" },
+            { "key": "source_from", "value": "2026-10-01T14:00" },
+            { "key": "source_to", "value": "2026-10-01T14:40" },
+            { "key": "limit", "value": "10" },
+            { "key": "next", "value": "{{next}}" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "6. readings（反映時刻で直近 30 分・全設備）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/readings?minutes=30&limit=100",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            { "key": "minutes", "value": "30" },
+            { "key": "limit", "value": "100" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "7. summary（反映時刻で直近 60 分）",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/summary", "host": ["{{baseUrl}}"], "path": ["summary"] }
+      }
+    },
+    {
+      "name": "8. summary（CSV 上の稼働時間帯 6:00〜22:00）",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/summary?source_from=2026-10-01T06:00&source_to=2026-10-01T22:00",
+          "host": ["{{baseUrl}}"],
+          "path": ["summary"],
+          "query": [
+            { "key": "source_from", "value": "2026-10-01T06:00" },
+            { "key": "source_to", "value": "2026-10-01T22:00" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "9. 入力エラー（limit が上限超え → 400）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.test('400 が返る', () => pm.response.to.have.status(400));"]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/readings?limit=99999",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [{ "key": "limit", "value": "99999" }]
+        }
+      }
+    },
+    {
+      "name": "10. 署名なし（→ 403）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.test('403 が返る（IAM 認証が効いている）', () => pm.response.to.have.status(403));"]
+          }
+        }
+      ],
+      "request": {
+        "auth": { "type": "noauth" },
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/status", "host": ["{{baseUrl}}"], "path": ["status"] }
+      }
+    }
+  ]
+}

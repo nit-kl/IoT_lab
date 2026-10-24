@@ -1,4 +1,6 @@
 # 大きいデータは各自ローカルで生成する（generate_csv.py）
 data/*.large.csv
+# postman_env.py が作る Environment には AWS の認証情報が入る
+postman/*.postman_environment.json
 __pycache__/
 .venv/
