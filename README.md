@@ -5,7 +5,7 @@
 | キット | 内容 | 方針 | 手順 |
 |---|---|---|---|
 | [factory-replay](factory-replay/) | 工場ラインのサンプル CSV を S3 に置くと Aurora に少しずつ反映され、HTTP API で取得・リセットできる | [実現方針](factory-replay/docs/実現方針.md) | [作業手順](factory-replay/docs/作業手順.md) |
-| [factory-kg](factory-kg/) | replay の工場データを標準オントロジー（SOSA/SSN・SAREF4INMA・QUDT・DCAT/Hydra・SKOS）でナレッジグラフにし、SPARQL とローカルビューアで見る。各計測項目は replay の API を参照する | [実現方針](factory-kg/docs/実現方針.md) | [作業手順](factory-kg/docs/作業手順.md) |
+| [factory-kg](factory-kg/) | replay の工場データを標準オントロジー（SOSA/SSN・SAREF4INMA・QUDT・DCAT/Hydra・SKOS）でナレッジグラフにし、各計測項目から replay の API を参照する。SPARQL・ローカルビューア・REST API（F/E アプリ向け）・MCP（AI エージェント向け）で使える | [実現方針](factory-kg/docs/実現方針.md) | [作業手順](factory-kg/docs/作業手順.md) |
 
 ```mermaid
 flowchart LR
@@ -13,12 +13,15 @@ flowchart LR
   R -->|設備・計測項目と API の URL| K[factory-kg<br/>TTL → S3 → SPARQL（Lambda）]
   K --> V[ローカルビューア]
   V -->|グラフに書かれた URL で値を取得| R
+  K --> API[REST API]
+  API -->|グラフに書かれた URL で値を取得| R
+  AG[AI エージェント] -->|MCP| API
 ```
 
 ## 使う順番
 
 1. factory-replay の環境を作り、CSV を流す（`factory-replay/docs/作業手順.md` の 0〜4 章）
-2. factory-kg でグラフを作って公開し、ビューアで見る（`factory-kg/docs/作業手順.md`）
+2. factory-kg でグラフを作って公開し、ビューア・REST API・MCP で使う（`factory-kg/docs/作業手順.md`）
 3. 片付けは factory-kg → factory-replay の順（どちらも `aws/teardown_aws.py --owner <owner>` が残存リソースまで確認する）
 
 | | スタック名 | 使っていない間の費用 |
