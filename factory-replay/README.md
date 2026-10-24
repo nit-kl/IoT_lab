@@ -26,6 +26,25 @@ python aws/teardown_aws.py --owner kojima     # すべて削除（DB・S3 のデ
 | S3 バケット | `xcp-factory-<owner>-data-<アカウントID>` | CSV は `incoming/` に置く |
 | Aurora Serverless v2（PostgreSQL） | `xcp-factory-<owner>` | 0〜4 ACU、5 分無接続で一時停止。Data API 有効 |
 | DB 認証情報 | RDS 管理シークレット | パスワードは自動生成・自動ローテーション |
+| Lambda | `xcp-factory-<owner>-loader` / `-replayer` | Python 3.13・arm64。ログは 14 日保持 |
+| EventBridge Scheduler | `xcp-factory-<owner>-replayer` | 1 分ごとに replayer を起動。リプレイ中だけ ENABLED |
+| S3 バケット（Lambda コード用） | `xcp-factory-<owner>-artifacts-<アカウントID>` | スタックより先に必要なため `setup_aws.py` がスタック外で作成。`teardown_aws.py` で削除 |
+
+## ② CSV のアップロード → 少しずつ反映
+
+```
+aws s3 cp data/factory_sample.csv s3://xcp-factory-<owner>-data-<アカウントID>/incoming/
+```
+
+1. `incoming/*.csv` が置かれると **loader** が起動し、DB の `start_replay()` を呼ぶ。
+   DB が S3 から CSV を直接 `staging_readings` に取り込み、`readings` を空にして `replay_state.status = running` にする
+   （CSV の中身は Lambda を通らないので、数百 MB の CSV でもよい）
+2. **replayer** が 1 分ごとに起動し、「開始からの経過時間 × 速度（既定 60 倍）」ぶんの行を `readings` に写す
+3. 全行写し終えると `status = done` になり、スケジュールが止まる → DB は 5 分後に一時停止
+
+- 取り込みに失敗すると `status = error` になり、`message` に理由が入る（直前の `readings` はそのまま）
+- 新しい CSV を置くと、その時点で最初からやり直しになる
+- 確認手順は [docs/作業手順.md](../docs/作業手順.md) の「4. ステップ 3」
 
 - テーブル定義は `aws/schema.sql`。`setup_aws.py` が Data API で作成する（何度実行しても同じ結果）
 - 使っていない間の費用は Aurora のストレージ代（1 GB 未満なら月 1 ドル未満）とシークレット代（月 $0.40）程度。

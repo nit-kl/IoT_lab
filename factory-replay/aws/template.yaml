@@ -33,6 +33,18 @@ Parameters:
     MinValue: 300
     MaxValue: 86400
     Description: 接続がなくなってから Aurora が一時停止するまでの秒数
+  CodeBucket:
+    Type: String
+    Description: Lambda コードの zip を置いたバケット（setup_aws.py が作成・指定する）
+  CodeKey:
+    Type: String
+    Description: Lambda コードの zip のキー（内容のハッシュ入り。コードが変わると Lambda が更新される）
+  BatchRows:
+    Type: Number
+    Default: 50000
+    MinValue: 1000
+    MaxValue: 200000
+    Description: replayer が 1 回の SQL で写す最大行数
 
 Resources:
   # ---------- ネットワーク（DB 専用。インターネット出口なし） ----------
@@ -136,13 +148,27 @@ Resources:
     Type: AWS::S3::Bucket
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
+    DependsOn: LoaderInvokePermission
     Metadata:
       com.aws.cloudformation.Context:
         why: >-
           incoming/*.csv を置く。中身は generate_csv.py で再生成できる検証データのため
           Retain/バージョニングはせず、teardown で空にして削除する
+        must:
+          - BucketName の形式を変えるなら LoaderInvokePermission の SourceArn も合わせる（循環参照回避のため文字列で組み立てている）
     Properties:
       BucketName: !Sub "${AWS::StackName}-data-${AWS::AccountId}"
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt LoaderFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: incoming/
+                  - Name: suffix
+                    Value: .csv
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -182,6 +208,7 @@ Resources:
         why: Aurora の s3Import 機能が CSV を読むためのロール
         must:
           - 読めるのは incoming/ 配下のみ
+          - バケット ARN は文字列で組み立てる（DataBucket を参照すると DataBucket→Loader→DbCluster→本ロールで循環する）
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -202,10 +229,10 @@ Resources:
             Statement:
               - Effect: Allow
                 Action: s3:GetObject
-                Resource: !Sub "${DataBucket.Arn}/incoming/*"
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${AWS::StackName}-data-${AWS::AccountId}/incoming/*"
               - Effect: Allow
                 Action: s3:ListBucket
-                Resource: !GetAtt DataBucket.Arn
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${AWS::StackName}-data-${AWS::AccountId}"
                 Condition:
                   StringLike:
                     s3:prefix: incoming/*
@@ -257,6 +284,181 @@ Resources:
       Engine: aurora-postgresql
       PubliclyAccessible: false
 
+  # ---------- 少しずつ反映（loader / replayer / 1 分ごとのスケジュール） ----------
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: loader/replayer 共通。DB へは Data API のみ、S3 の CSV は DB が直接読むので S3 権限は不要
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: data-api
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - rds-data:ExecuteStatement
+                  - rds-data:BatchExecuteStatement
+                Resource: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${AWS::StackName}"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !GetAtt DbCluster.MasterUserSecret.SecretArn
+        - PolicyName: toggle-schedule
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - scheduler:GetSchedule
+                  - scheduler:UpdateSchedule
+                Resource: !Sub "arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/${AWS::StackName}-replayer"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt SchedulerRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: scheduler.amazonaws.com
+
+  LoaderLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-loader"
+      RetentionInDays: 14
+
+  LoaderFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: S3 イベントで起動し start_replay() を呼ぶだけ。大きい CSV でも DB 側で取り込むため 256MB で足りる
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-loader"
+      Description: incoming/*.csv を DB に取り込みリプレイを開始する
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: loader.handler
+      MemorySize: 256
+      Timeout: 300
+      Role: !GetAtt FunctionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      LoggingConfig:
+        LogGroup: !Ref LoaderLogGroup
+      Environment:
+        Variables:
+          CLUSTER_ARN: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DbCluster}"
+          SECRET_ARN: !GetAtt DbCluster.MasterUserSecret.SecretArn
+          DATABASE: factory
+          SCHEDULE_NAME: !Sub "${AWS::StackName}-replayer"
+
+  LoaderInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: 失敗は replay_state.status=error とログで分かる。取り込みは冪等なので 1 回だけ再試行（DLQ は置かない）
+    Properties:
+      FunctionName: !Ref LoaderFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 1
+
+  LoaderInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LoaderFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub "arn:${AWS::Partition}:s3:::${AWS::StackName}-data-${AWS::AccountId}"
+
+  ReplayerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-replayer"
+      RetentionInDays: 14
+
+  ReplayerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-replayer"
+      Description: staging_readings から readings へ経過時間ぶんの行を写す
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: replayer.handler
+      MemorySize: 256
+      Timeout: 120
+      Role: !GetAtt FunctionRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      LoggingConfig:
+        LogGroup: !Ref ReplayerLogGroup
+      Environment:
+        Variables:
+          CLUSTER_ARN: !Sub "arn:${AWS::Partition}:rds:${AWS::Region}:${AWS::AccountId}:cluster:${DbCluster}"
+          SECRET_ARN: !GetAtt DbCluster.MasterUserSecret.SecretArn
+          DATABASE: factory
+          SCHEDULE_NAME: !Sub "${AWS::StackName}-replayer"
+          BATCH_ROWS: !Ref BatchRows
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: invoke-replayer
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-replayer"
+
+  ReplaySchedule:
+    Type: AWS::Scheduler::Schedule
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          loader が有効化し、replayer が完了時に無効化する。止まっている間は起動されず DB も一時停止できる。
+          State は Lambda が書き換えるため、このリソースを更新するとスタック上の DISABLED に戻る（次の CSV 投入で再有効化される）
+        must:
+          - Name は FunctionRole の toggle-schedule ポリシーと Lambda の SCHEDULE_NAME に一致させる
+    Properties:
+      Name: !Sub "${AWS::StackName}-replayer"
+      Description: xcp-factory replayer を 1 分ごとに起動する
+      ScheduleExpression: rate(1 minute)
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: DISABLED
+      Target:
+        Arn: !GetAtt ReplayerFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        RetryPolicy:
+          MaximumRetryAttempts: 0
+          MaximumEventAgeInSeconds: 60
+
 Outputs:
   BucketName:
     Description: CSV をアップロードするバケット（incoming/ 配下に置く）
@@ -270,3 +472,6 @@ Outputs:
   DatabaseName:
     Description: データベース名
     Value: factory
+  ScheduleName:
+    Description: replayer を起動するスケジュール（EventBridge Scheduler、default グループ）
+    Value: !Ref ReplaySchedule

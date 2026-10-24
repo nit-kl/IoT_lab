@@ -1,5 +1,6 @@
 -- テーブル定義。setup_aws.py が Data API で 1 文ずつ実行する（何度実行しても同じ結果になる）。
--- Data API は 1 回に 1 文しか実行できないため、文の区切りは行末の ; とし、文字列中に ; を書かないこと。
+-- Data API は 1 回に 1 文しか実行できないため、setup_aws.py は ; で文を区切る（$$ 〜 $$ の中は区切らない）。
+-- 文字列リテラルの中には ; を書かないこと。
 
 -- S3 から CSV を直接取り込むための拡張（aws_commons も一緒に入る）
 CREATE EXTENSION IF NOT EXISTS aws_s3 CASCADE;
@@ -49,3 +50,42 @@ CREATE TABLE IF NOT EXISTS replay_state (
 );
 
 INSERT INTO replay_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- CSV を staging_readings に取り込み、readings を空にしてリプレイを開始する（loader Lambda が呼ぶ）。
+-- 1 トランザクションで行うので、失敗したら元の状態のまま status = 'error' になる。
+-- readings の TRUNCATE は取り込み完了後に行い、取り込み中も readings を参照できるようにしている。
+CREATE OR REPLACE FUNCTION start_replay(p_bucket TEXT, p_key TEXT, p_region TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_rows BIGINT;
+  v_base TIMESTAMPTZ;
+BEGIN
+  TRUNCATE staging_readings RESTART IDENTITY;
+  PERFORM aws_s3.table_import_from_s3(
+    'staging_readings',
+    'ts,line_id,equipment_id,metric,value,unit',
+    '(FORMAT csv, HEADER true)',
+    aws_commons.create_s3_uri(p_bucket, p_key, p_region));
+
+  SELECT count(*), min(ts) INTO v_rows, v_base FROM staging_readings;
+  IF v_rows = 0 THEN
+    RAISE EXCEPTION 'CSV にデータ行がありません';
+  END IF;
+
+  TRUNCATE readings;
+  -- 取り込みに時間がかかっても、リプレイの起点は取り込み完了時刻にする（now() はトランザクション開始時刻）
+  UPDATE replay_state
+     SET status = 'running', source_key = p_key, started_at = clock_timestamp(),
+         base_ts = v_base, total_rows = v_rows, cursor_seq = 0, message = NULL,
+         updated_at = clock_timestamp()
+   WHERE id = 1;
+  RETURN 'running';
+EXCEPTION WHEN OTHERS THEN
+  UPDATE replay_state
+     SET status = 'error', source_key = p_key, message = left(SQLERRM, 500), updated_at = clock_timestamp()
+   WHERE id = 1;
+  RETURN 'error';
+END;
+$$;

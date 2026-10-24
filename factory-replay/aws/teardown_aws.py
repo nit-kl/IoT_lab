@@ -11,7 +11,7 @@ import sys
 import boto3
 from botocore.exceptions import ClientError, WaiterError
 
-from naming import add_common_args, stack_name
+from naming import add_common_args, artifacts_bucket_name, stack_name
 
 
 def empty_bucket(s3, bucket):
@@ -64,6 +64,18 @@ def main():
     except WaiterError:
         print("削除に失敗しました。コンソールの CloudFormation > イベントで原因を確認してください", file=sys.stderr)
         sys.exit(1)
+
+    # スタック外で作った Lambda コード用バケット
+    account = boto3.client("sts", region_name=args.region).get_caller_identity()["Account"]
+    code_bucket = artifacts_bucket_name(args.owner, account)
+    s3 = boto3.client("s3", region_name=args.region)
+    try:
+        empty_bucket(s3, code_bucket)
+        s3.delete_bucket(Bucket=code_bucket)
+        print(f"バケット {code_bucket} を削除しました")
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "NoSuchBucket":
+            raise
     print("削除が完了しました")
 
 

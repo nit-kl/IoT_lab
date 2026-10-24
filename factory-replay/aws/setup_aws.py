@@ -7,18 +7,53 @@
 """
 
 import argparse
+import hashlib
+import io
 import sys
+import zipfile
 from pathlib import Path
 
 import boto3
 from botocore.exceptions import ClientError, WaiterError
 
 from dataapi import DataApi
-from naming import PROJECT, add_common_args, stack_name
+from naming import PROJECT, add_common_args, artifacts_bucket_name, stack_name
 
 HERE = Path(__file__).resolve().parent
 TEMPLATE = HERE / "template.yaml"
 SCHEMA = HERE / "schema.sql"
+# Lambda の zip に入れるファイル（すべて zip 直下に置く）
+LAMBDA_FILES = sorted((HERE / "lambda").glob("*.py")) + [HERE / "dataapi.py"]
+
+
+def build_lambda_zip():
+    """Lambda コードの zip とキーを返す。内容が同じなら同じキーになる（変わったときだけ Lambda が更新される）。"""
+    buf, digest = io.BytesIO(), hashlib.sha256()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for path in LAMBDA_FILES:
+            data = path.read_bytes()
+            digest.update(path.name.encode() + b"\0" + data)
+            info = zipfile.ZipInfo(path.name, date_time=(2020, 1, 1, 0, 0, 0))
+            info.external_attr = 0o644 << 16
+            z.writestr(info, data, zipfile.ZIP_DEFLATED)
+    return buf.getvalue(), f"lambda/{digest.hexdigest()[:16]}.zip"
+
+
+def upload_lambda_code(s3, bucket, region, owner):
+    """スタック外のアーティファクト用バケットに Lambda コードを置く（なければ作る）。"""
+    try:
+        s3.head_bucket(Bucket=bucket)
+    except ClientError:
+        config = {} if region == "us-east-1" else {"CreateBucketConfiguration": {"LocationConstraint": region}}
+        s3.create_bucket(Bucket=bucket, **config)
+        s3.put_public_access_block(Bucket=bucket, PublicAccessBlockConfiguration={
+            "BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": True, "RestrictPublicBuckets": True})
+        s3.put_bucket_tagging(Bucket=bucket, Tagging={"TagSet": [
+            {"Key": "Project", "Value": PROJECT}, {"Key": "Owner", "Value": owner}]})
+        print(f"Lambda コード用バケット {bucket} を作成しました")
+    body, key = build_lambda_zip()
+    s3.put_object(Bucket=bucket, Key=key, Body=body)
+    return key
 
 
 def deploy_stack(cfn, name, owner, parameters):
@@ -67,9 +102,20 @@ def stack_outputs(cfn, name):
 
 
 def schema_statements():
-    """schema.sql を 1 文ずつに分ける（コメント行は除く）。"""
+    """schema.sql を 1 文ずつに分ける。コメント行は除き、$$ 〜 $$（関数本体）の中の ; では区切らない。"""
     lines = [l for l in SCHEMA.read_text(encoding="utf-8").splitlines() if not l.lstrip().startswith("--")]
-    return [s.strip() for s in "\n".join(lines).split(";") if s.strip()]
+    statements, current = [], []
+    for i, part in enumerate("\n".join(lines).split("$$")):
+        if i % 2:  # $$ の内側
+            current.append(f"$${part}$$")
+            continue
+        *done, rest = part.split(";")
+        for piece in done:
+            statements.append("".join(current) + piece)
+            current = []
+        current.append(rest)
+    statements.append("".join(current))
+    return [s.strip() for s in statements if s.strip()]
 
 
 def apply_schema(db):
@@ -77,7 +123,7 @@ def apply_schema(db):
     db.wake(resume_wait_sec=300)
     for sql in schema_statements():
         db.execute(sql)
-    print("テーブルを作成しました: staging_readings, readings, replay_state")
+    print("テーブルと関数を作成しました: staging_readings, readings, replay_state, start_replay()")
 
 
 def main():
@@ -89,11 +135,17 @@ def main():
     args = ap.parse_args()
 
     name = stack_name(args.owner)
+    account = boto3.client("sts", region_name=args.region).get_caller_identity()["Account"]
+    code_bucket = artifacts_bucket_name(args.owner, account)
+    code_key = upload_lambda_code(boto3.client("s3", region_name=args.region), code_bucket, args.region, args.owner)
+
     cfn = boto3.client("cloudformation", region_name=args.region)
     deploy_stack(cfn, name, args.owner, {
         "MaxAcu": args.max_acu,
         "AutoPauseSeconds": args.auto_pause,
         "VpcCidr": args.vpc_cidr,
+        "CodeBucket": code_bucket,
+        "CodeKey": code_key,
     })
 
     out = stack_outputs(cfn, name)
@@ -104,6 +156,9 @@ def main():
     print(f"スタック名 : {name}")
     print(f"バケット   : {out['BucketName']}")
     print(f"クラスター : {out['ClusterArn']}")
+    print()
+    print("CSV をアップロードすると反映が始まります:")
+    print(f"  aws s3 cp data/factory_sample.csv s3://{out['BucketName']}/incoming/")
 
 
 if __name__ == "__main__":
