@@ -130,7 +130,8 @@ class SparqlLambdaTest(unittest.TestCase):
         self.assertEqual(status["triples"], TRIPLES)
         self.assertEqual(set(status["graphs"]), {"https://xcp-factory.example/graph/ontology",
                                                  "https://xcp-factory.example/graph/imports",
-                                                 "https://xcp-factory.example/graph/instances"})
+                                                 "https://xcp-factory.example/graph/instances",
+                                                 "https://xcp-factory.example/graph/layout"})
         self.assertEqual(sum(status["graphs"].values()), TRIPLES)
         self.assertEqual(status["etag"], '"v1"')
 

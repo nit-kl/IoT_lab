@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/* ダーク／ライトは <html class="dark"> で切り替える */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Segoe UI", "Hiragino Sans", "Noto Sans JP", "Meiryo", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  --color-run: #22c55e;
+  --color-stop: #94a3b8;
+  --color-alarm: #ef4444;
+  --color-accent: #22d3ee;
+  --color-ink-950: #05080f;
+  --color-ink-900: #0a101c;
+  --color-ink-850: #0e1626;
+  --color-ink-800: #141e31;
+  --color-ink-700: #1e2a42;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-100 text-slate-800 antialiased dark:bg-ink-950 dark:text-slate-200;
+  background-image: radial-gradient(1200px 600px at 10% -10%, rgb(34 211 238 / 0.06), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgb(99 102 241 / 0.06), transparent 60%);
+}
+
+/* パネル（監視室風のガラス調） */
+@utility panel {
+  @apply rounded-xl border border-slate-200 bg-white/85 shadow-sm backdrop-blur dark:border-ink-700 dark:bg-ink-900/80 dark:shadow-black/40;
+}
+
+@utility panel-title {
+  @apply text-[11px] font-semibold tracking-[0.12em] text-slate-500 uppercase dark:text-slate-400;
+}
+
+@utility chip {
+  @apply inline-flex items-center gap-1 rounded-full border border-slate-300 px-2 py-0.5 text-xs text-slate-600 dark:border-ink-700 dark:text-slate-300;
+}
+
+@utility btn {
+  @apply inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-cyan-500 hover:text-cyan-700 disabled:opacity-50 dark:border-ink-700 dark:bg-ink-850 dark:text-slate-200 dark:hover:border-cyan-400 dark:hover:text-cyan-300;
+}
+
+@utility input {
+  @apply rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none placeholder:text-slate-400 focus:border-cyan-500 dark:border-ink-700 dark:bg-ink-850 dark:placeholder:text-slate-500 dark:focus:border-cyan-400;
+}
+
+/* 表 */
+.data-table {
+  @apply w-full text-sm;
+}
+.data-table th {
+  @apply py-1.5 pr-2 text-left text-xs font-normal text-slate-500 dark:text-slate-400;
+}
+.data-table td {
+  @apply border-t border-slate-200 py-1.5 pr-2 align-top dark:border-ink-700;
+}
+
+/* スクロールバー */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(100 116 139 / 0.5) transparent;
+}
+
+@keyframes alarm-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.alarm-pulse {
+  animation: alarm-pulse 1s ease-in-out infinite;
+}

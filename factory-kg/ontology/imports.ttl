@@ -11,6 +11,7 @@
 #   skos     http://www.w3.org/2004/02/skos/core.rdf  （版の記載なし）
 #   prov     https://www.w3.org/ns/prov.ttl  http://www.w3.org/ns/prov-20130430
 #   dcterms  https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_terms.ttl  （版の記載なし）
+#   geo      https://schemas.opengis.net/geosparql/1.0/geosparql_vocab_all.rdf  OGC GeoSPARQL 1.0
 
 @prefix dc: <http://purl.org/dc/elements/1.1/> .
 @prefix dcat: <http://www.w3.org/ns/dcat#> .
@@ -87,6 +88,14 @@ qudt:hasUnit a owl:ObjectProperty ;
     rdfs:label "has unit" ;
     rdfs:range qudt:Unit .
 
+geo:hasGeometry a owl:ObjectProperty ;
+    rdfs:label "hasGeometry"@en ;
+    rdfs:comment """
+      A spatial representation for a given feature.
+    """@en ;
+    rdfs:domain geo:Feature ;
+    rdfs:range geo:Geometry .
+
 skos:definition a rdf:Property,
         owl:AnnotationProperty ;
     rdfs:label "definition"@en ;
@@ -105,8 +114,7 @@ skos:notation a rdf:Property,
 skos:prefLabel a rdf:Property,
         owl:AnnotationProperty ;
     rdfs:label "preferred label"@en ;
-    rdfs:comment """skos:prefLabel, skos:altLabel and skos:hiddenLabel are pairwise
-      disjoint properties."""@en ;
+    rdfs:comment "The range of skos:prefLabel is the class of RDF plain literals."@en ;
     rdfs:subPropertyOf rdfs:label .
 
 skos:topConceptOf a rdf:Property,
@@ -238,8 +246,14 @@ qudt:Verifiable a qudt:AspectClass,
     rdfs:label "Verifiable" ;
     rdfs:subClassOf qudt:Aspect .
 
-geo:SpatialObject a owl:Class ;
-    rdfs:label "SpatialObject"@en .
+geo:Geometry a owl:Class ;
+    rdfs:label "Geometry"@en ;
+    rdfs:comment """
+      The class represents the top-level geometry type. This class is 
+      equivalent to the UML class GM_Object defined in ISO 19107, and 
+      it is superclass of all geometry types.
+    """@en ;
+    rdfs:subClassOf geo:SpatialObject .
 
 rdfs:label a owl:AnnotationProperty .
 
@@ -282,6 +296,10 @@ s4inma:ProductionEquipment a owl:Class ;
         saref:Device .
 
 <https://saref.etsi.org/saref4syst/System> a owl:Class .
+
+geo:SpatialObject a owl:Class ;
+    rdfs:label "SpatialObject"@en ;
+    rdfs:comment "The class spatial-object represents everything that can have a spatial representation. It is superclass of feature and geometry."@en .
 
 skos:Concept a owl:Class ;
     rdfs:label "Concept"@en .

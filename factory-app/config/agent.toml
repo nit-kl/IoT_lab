@@ -1,0 +1,39 @@
+# ③ AI エージェントの設定（使えるモデル・単価・上限・予算）。費用の考え方は docs/実現方針.md の 4 章。
+#
+# 変えるときの注意:
+# - 高いモデルを使えるようにするには allowed に足す（例: allowed = ["haiku", "opus"]）。Opus は Haiku の約 40 倍の単価
+# - 単価は AWS Pricing API（東京リージョン、サービスコード AmazonBedrockFoundationModels）で確認した値。
+#   python server/prices.py で今の単価と比べられる
+# - 金額はすべて「目安」。正確な請求額は AWS の請求（Billing）で確認する
+
+# 使ってよいモデル（下の [models.*] のキー）と、既定のモデル
+allowed = ["haiku"]
+default = "haiku"
+
+# 円換算のレート（1 ドル = 何円か）
+usd_jpy = 150
+
+[limits]
+max_tool_calls = 8          # 1 回の質問でツールを呼べる回数
+max_output_tokens = 2000    # 1 回の Bedrock 呼び出しで出力できるトークン数
+max_input_tokens = 30000    # 1 回の Bedrock 呼び出しで送る入力トークン数（超えるときは古い会話から省く）
+per_question_yen = 5        # 1 回の質問の費用の上限（円）
+daily_yen = 100             # 1 日の予算（円、日本時間）。達したらその日はエージェントを止める
+monthly_yen = 1000          # 1 か月の予算（円、日本時間）。達したらその月はエージェントを止める
+
+# 単価は 100 万トークンあたりのドル（AWS Pricing API の「Standard」= 日本国内プロファイルの値）。cache_write はキャッシュへの書き込み、cache_read は読み込み
+[models.haiku]
+label = "Claude Haiku 5.5（日本国内）"
+model_id = "jp.anthropic.claude-haiku-5-5"
+input = 0.11
+output = 0.55
+cache_read = 0.011
+cache_write = 0.1375
+
+[models.opus]
+label = "Claude Opus 5.5（日本国内・高い）"
+model_id = "jp.anthropic.claude-opus-5-5"
+input = 4.40
+output = 22.00
+cache_read = 0.22
+cache_write = 5.50

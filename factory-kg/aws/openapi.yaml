@@ -277,6 +277,17 @@ components:
         category: { type: string }
         metrics: { type: array, items: { type: string } }
         children: { type: array, items: { $ref: "#/components/schemas/TreeNode" } }
+        layout: { $ref: "#/components/schemas/Layout" }
+    Layout:
+      type: object
+      description: "配置（3D 表示用、グラフの xf:placement）。床の南西の角が原点、x は東・y は北・高さは上（メートル）。配置が書かれていないノードには無い"
+      properties:
+        x: { type: number, description: 床面の中心の x（m）, example: 22.5 }
+        y: { type: number, description: 床面の中心の y（m）, example: 10.0 }
+        width: { type: number, description: 向きが 0 のときの x 方向の大きさ（m） }
+        depth: { type: number, description: 向きが 0 のときの y 方向の大きさ（m） }
+        height: { type: number, description: 高さ（m）。エリアは天井の高さ }
+        rotation: { type: number, description: 真上から見て反時計回りの角度（度）, example: 0 }
     EquipmentSummary:
       type: object
       properties:
