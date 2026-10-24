@@ -24,7 +24,8 @@ from kgnaming import PROJECT, add_common_args, artifacts_bucket_name, replay_sta
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 TEMPLATE = HERE / "template.yaml"
-HANDLER = HERE / "lambda" / "sparql.py"
+# Lambda の zip に入れるコード（sparql・api の両 Lambda で共通の zip）
+LAMBDA_FILES = [HERE / "lambda" / n for n in ("sparql.py", "api.py", "domain.py", "graphstore.py")]
 WHEEL_DIR = ROOT / ".cache" / "wheels"
 SAMPLE_CSV = ROOT.parent / "factory-replay" / "data" / "factory_sample.csv"
 
@@ -55,7 +56,7 @@ def pyoxigraph_wheel():
 
 
 def build_lambda_zip():
-    """sparql.py と pyoxigraph を 1 つの zip にする。内容が同じなら同じキーになる。"""
+    """Lambda のコードと pyoxigraph を 1 つの zip にする。内容が同じなら同じキーになる。"""
     wheel = pyoxigraph_wheel()
     buf, digest = io.BytesIO(), hashlib.sha256()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as out:
@@ -64,7 +65,8 @@ def build_lambda_zip():
             info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
             info.external_attr = mode << 16
             out.writestr(info, data, zipfile.ZIP_DEFLATED)
-        add("sparql.py", HANDLER.read_bytes())
+        for path in LAMBDA_FILES:
+            add(path.name, path.read_bytes())
         with zipfile.ZipFile(wheel) as whl:
             for name in sorted(whl.namelist()):
                 if not name.endswith("/"):
@@ -168,6 +170,7 @@ def main():
     deploy_stack(cfn, name, args.owner, {
         "CodeBucket": code_bucket, "CodeKey": code_key,
         "MemorySize": args.memory, "CheckIntervalSeconds": args.check_interval,
+        "ReplayApiFunctionName": f"{replay_stack_name(args.owner)}-api",
     })
     outputs = {o["OutputKey"]: o["OutputValue"] for o in cfn.describe_stacks(StackName=name)["Stacks"][0]["Outputs"]}
 
@@ -179,6 +182,7 @@ def main():
     print(f"スタック名      : {name}")
     print(f"グラフの置き場所: s3://{outputs['GraphBucket']}/{outputs['GraphKey']}")
     print(f"SPARQL          : {outputs['SparqlUrl']}sparql")
+    print(f"REST API        : {outputs['ApiUrl']}v1/…（仕様は aws/openapi.yaml）")
     print()
     print("確認: python tools/sparql.py --owner " + args.owner + " --status")
 

@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "aws" / "lambda"))
 
+import graphstore  # noqa: E402
 import publish_ttl  # noqa: E402
 import sparql  # noqa: E402
 from kgcommon import EXAMPLE_INSTANCES  # noqa: E402
@@ -44,7 +45,7 @@ class FakeS3:
     def __call__(self, current_etag):
         self.calls += 1
         if self.body is None:
-            raise sparql.NotPublished()
+            raise graphstore.NotPublished()
         if current_etag == self.etag:
             return None
         return self.body, self.etag, "version-" + self.etag.strip('"')
@@ -53,10 +54,9 @@ class FakeS3:
 class SparqlLambdaTest(unittest.TestCase):
     def setUp(self):
         self.s3 = FakeS3()
-        self._orig = sparql.fetch_graph
-        sparql.fetch_graph = self.s3
-        sparql.state.update(store=None, etag=None, checked=0.0)
-        self.addCleanup(setattr, sparql, "fetch_graph", self._orig)
+        self._orig = sparql.cache
+        sparql.cache = graphstore.GraphCache("test-bucket", "kg/current.nq", 30, fetch=self.s3)
+        self.addCleanup(setattr, sparql, "cache", self._orig)
 
     def select(self, q, headers=None):
         return call(event("POST", "/sparql", body=PREFIX_HEADER + q,
@@ -136,7 +136,7 @@ class SparqlLambdaTest(unittest.TestCase):
 
     def test_reload_when_etag_changes(self):
         self.select("ASK {}")
-        self.assertEqual(sparql.state["etag"], '"v1"')
+        self.assertEqual(sparql.cache.etag, '"v1"')
         # 確認間隔内は S3 を見に行かない
         calls = self.s3.calls
         self.select("ASK {}")
@@ -144,7 +144,7 @@ class SparqlLambdaTest(unittest.TestCase):
         # S3 が更新された（ETag が変わった）→ 確認間隔を過ぎると読み直す
         smaller = b"<https://x.example/a> <https://x.example/b> <https://x.example/c> <https://x.example/g> .\n"
         self.s3.body, self.s3.etag = smaller, '"v2"'
-        sparql.state["checked"] -= sparql.CHECK_INTERVAL + 1
+        sparql.cache.checked -= sparql.cache.check_interval + 1
         _, _, body = call(event("GET", "/status"))
         self.assertEqual(json.loads(body)["triples"], 1)
         self.assertEqual(json.loads(body)["etag"], '"v2"')

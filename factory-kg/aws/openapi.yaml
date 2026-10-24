@@ -1,0 +1,304 @@
+openapi: 3.1.0
+info:
+  title: 工場ナレッジグラフ REST API
+  version: "1.0.0"
+  description: |
+    工場ナレッジグラフ（構造）と工場 CSV リプレイ基盤（値）を 1 つにまとめた読み取り専用の API。
+    構造は標準オントロジー（SAREF4INMA・SOSA/SSN・QUDT・DCAT/Hydra・SKOS）で表したグラフから、
+    値はグラフに書かれた replay の API（latest / readings）から取る。
+
+    - 認証: AWS IAM（SigV4 署名、サービス名 `lambda`、リージョン `ap-northeast-1`）。署名なしは 403
+    - 時刻: 日本時間（+09:00）の ISO 8601。`ts` は反映時刻、`source_ts` は CSV 上の時刻
+    - 値: コード値（稼働状態など）は `{"value": 2, "label": "異常停止"}` のように意味を添える
+    - replay が無い・DB の再開中のときも構造は返し、値の部分を `{"unavailable": "理由"}` にする
+    - 各要素の `@id` はグラフ上の IRI、`types` は標準オントロジーのクラス
+servers:
+  - url: https://{functionUrlId}.lambda-url.ap-northeast-1.on.aws
+    variables:
+      functionUrlId:
+        default: xxxxxxxx
+        description: setup_aws.py の出力（スタック出力 ApiUrl）
+security:
+  - sigv4: []
+
+paths:
+  /v1/factory:
+    get:
+      operationId: getFactory
+      summary: 工場の構造（工場 → サイト → エリア → ライン → 設備）
+      description: 値は含まない（replay を呼ばない）。設備には分類と計測項目名の一覧が付く。
+      responses:
+        "200":
+          description: 工場の木
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  factories:
+                    type: array
+                    items: { $ref: "#/components/schemas/TreeNode" }
+  /v1/equipment:
+    get:
+      operationId: listEquipment
+      summary: 設備の一覧（稼働状態つき）
+      parameters:
+        - { name: line, in: query, schema: { type: string, example: LINE-A }, description: ライン ID で絞り込む }
+        - { name: category, in: query, schema: { type: string, example: cnc },
+            description: "分類で絞り込む（キー cnc・記号 CNC・名前 CNC 加工機 のどれでもよい）" }
+      responses:
+        "200":
+          description: 設備の一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/EquipmentSummary" } }
+                  count: { type: integer }
+  /v1/equipment/{id}:
+    get:
+      operationId: getEquipment
+      summary: 設備の詳細（計測項目ごとの最新値つき）
+      parameters: [{ $ref: "#/components/parameters/EquipmentId" }]
+      responses:
+        "200":
+          description: 設備の詳細
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EquipmentSummary"
+                  - type: object
+                    properties:
+                      properties: { type: array, items: { $ref: "#/components/schemas/Property" } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/equipment/{id}/properties/{metric}:
+    get:
+      operationId: getProperty
+      summary: 計測項目の詳細（単位・説明・コード表・取得 URL）と最新値
+      parameters: [{ $ref: "#/components/parameters/EquipmentId" }, { $ref: "#/components/parameters/Metric" }]
+      responses:
+        "200":
+          description: 計測項目
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Property" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/equipment/{id}/properties/{metric}/readings:
+    get:
+      operationId: getReadings
+      summary: 時系列（ページ単位）
+      description: |
+        範囲は反映時刻（minutes / from / to）か CSV 上の時刻（source_from / source_to）で指定する。
+        続きがあると next が返るので、次の要求に next を付ける（null なら最後）。
+      parameters:
+        - $ref: "#/components/parameters/EquipmentId"
+        - $ref: "#/components/parameters/Metric"
+        - $ref: "#/components/parameters/Minutes"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/SourceFrom"
+        - $ref: "#/components/parameters/SourceTo"
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 5000, default: 1000 } }
+        - { name: next, in: query, schema: { type: string }, description: 前の応答の next }
+      responses:
+        "200":
+          description: 時系列
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  equipment: { type: string }
+                  metric: { type: string }
+                  label: { type: string }
+                  unit: { $ref: "#/components/schemas/Unit" }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ts: { type: string, format: date-time }
+                        source_ts: { type: string, format: date-time }
+                        value: { $ref: "#/components/schemas/Value" }
+                  count: { type: integer }
+                  next: { type: [string, "null"] }
+                  unavailable: { type: string, description: replay から取得できなかった理由 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/equipment/{id}/properties/{metric}/readings/summary:
+    get:
+      operationId: getReadingsSummary
+      summary: 時系列の要約（AI エージェント向け）
+      description: |
+        範囲内の値を最大 5 万件まで集めて要約する。数値は件数・最小・最大（とその時刻）・平均、
+        コード値（稼働状態など）は状態ごとの件数・時間（分）と、状態が変わった時刻。points は最大 60 点に間引いた値。
+      parameters:
+        - $ref: "#/components/parameters/EquipmentId"
+        - $ref: "#/components/parameters/Metric"
+        - $ref: "#/components/parameters/Minutes"
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - $ref: "#/components/parameters/SourceFrom"
+        - $ref: "#/components/parameters/SourceTo"
+      responses:
+        "200":
+          description: 要約
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  truncated: { type: boolean, description: 5 万件を超えて途中までの要約になったか }
+                  first: { type: object }
+                  last: { type: object }
+                  min: { type: number }
+                  max: { type: number }
+                  max_at: { type: string, format: date-time }
+                  avg: { type: number }
+                  states:
+                    type: array
+                    items:
+                      type: object
+                      properties: { value: {}, label: { type: string }, count: { type: integer }, minutes: { type: integer } }
+                  changes: { type: array, items: { type: object } }
+                  points: { type: array, items: { type: object } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/codes/{key}:
+    get:
+      operationId: getCodes
+      summary: コード表（例 equipment-status）
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string, example: equipment-status } }
+      responses:
+        "200":
+          description: コード表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key: { type: string }
+                  label: { type: string }
+                  values: { type: array, items: { type: object, properties: { value: {}, label: { type: string }, definition: { type: string } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/search:
+    get:
+      operationId: search
+      summary: 設備・計測項目を ID・名前・分類・説明で検索
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, example: コンプレッサ } }
+      responses:
+        "200":
+          description: 検索結果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  equipment: { type: array, items: { $ref: "#/components/schemas/EquipmentSummary" } }
+                  properties:
+                    type: array
+                    items: { type: object, properties: { equipment: { type: string }, metric: { type: string }, label: { type: string }, unit: { type: string } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/status:
+    get:
+      operationId: getStatus
+      summary: グラフ（トリプル数・版）と replay（再生状態）の状態
+      responses:
+        "200":
+          description: 状態
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  graph: { type: object }
+                  counts: { type: object, properties: { lines: { type: integer }, equipment: { type: integer }, properties: { type: integer } } }
+                  replay: { type: object }
+
+components:
+  securitySchemes:
+    sigv4:
+      type: apiKey
+      name: Authorization
+      in: header
+      description: AWS SigV4 署名（サービス名 lambda）。aws login の認証情報や、Lambda の実行ロールで署名する
+  parameters:
+    EquipmentId: { name: id, in: path, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,32}$", example: CNC-01 } }
+    Metric: { name: metric, in: path, required: true, schema: { type: string, example: spindle_load } }
+    Minutes: { name: minutes, in: query, schema: { type: integer, minimum: 1 }, description: 反映時刻で直近 N 分 }
+    From: { name: from, in: query, schema: { type: string, example: "2026-10-24T13:00" }, description: 反映時刻の開始（タイムゾーン省略時は日本時間） }
+    To: { name: to, in: query, schema: { type: string }, description: 反映時刻の終了 }
+    SourceFrom: { name: source_from, in: query, schema: { type: string, example: "2026-10-01T14:00" }, description: CSV 上の時刻の開始 }
+    SourceTo: { name: source_to, in: query, schema: { type: string, example: "2026-10-01T15:00" }, description: CSV 上の時刻の終了 }
+  responses:
+    NotFound:
+      description: 設備・計測項目・コード表が見つからない
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    BadRequest:
+      description: パラメータが不正
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+  schemas:
+    Error:
+      type: object
+      properties: { error: { type: string } }
+    Value:
+      description: 数値、またはコード値の意味つき（{"value", "label"}）
+      oneOf:
+        - type: number
+        - type: object
+          properties: { value: {}, label: { type: string } }
+    Latest:
+      description: 最新値。取得できないときは unavailable だけ
+      type: object
+      properties:
+        value: { $ref: "#/components/schemas/Value" }
+        ts: { type: string, format: date-time }
+        source_ts: { type: string, format: date-time }
+        unavailable: { type: string }
+    Unit:
+      type: object
+      properties:
+        "@id": { type: string }
+        id: { type: string, example: "unit:PERCENT" }
+        label: { type: string, example: パーセント }
+        symbol: { type: string, example: "%" }
+    TreeNode:
+      type: object
+      properties:
+        kind: { type: string, enum: [factory, site, area, line, equipment] }
+        id: { type: [string, "null"] }
+        "@id": { type: string }
+        label: { type: string }
+        category: { type: string }
+        metrics: { type: array, items: { type: string } }
+        children: { type: array, items: { $ref: "#/components/schemas/TreeNode" } }
+    EquipmentSummary:
+      type: object
+      properties:
+        id: { type: string, example: CNC-01 }
+        "@id": { type: string }
+        label: { type: string, example: CNC 加工機 01 }
+        label_en: { type: string }
+        line: { type: string, example: LINE-A }
+        category: { type: object, properties: { key: { type: string }, label: { type: string }, notation: { type: string } } }
+        types: { type: array, items: { type: string }, example: ["s4inma:ProductionEquipment", "sosa:FeatureOfInterest"] }
+        metrics: { type: array, items: { type: string } }
+        status: { $ref: "#/components/schemas/Latest" }
+    Property:
+      type: object
+      properties:
+        metric: { type: string, example: spindle_load }
+        "@id": { type: string }
+        label: { type: string, example: CNC-01 主軸負荷 }
+        label_en: { type: string }
+        description: { type: [string, "null"] }
+        equipment: { type: string }
+        unit: { $ref: "#/components/schemas/Unit" }
+        endpoints: { type: object, properties: { latest: { type: string }, readings: { type: string } } }
+        codes: { type: object }
+        latest: { $ref: "#/components/schemas/Latest" }

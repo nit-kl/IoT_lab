@@ -5,6 +5,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlencode
 
 import boto3
 from botocore.auth import SigV4Auth
@@ -56,11 +57,20 @@ class KgClient:
         self.session = boto3.Session(region_name=region)
         self.outputs = stack_outputs(self.session, stack_name(owner))
         self.base = self.outputs["SparqlUrl"].rstrip("/")
+        self.api_base = self.outputs.get("ApiUrl", "").rstrip("/")
 
     def query(self, sparql, accept="application/sparql-results+json"):
         body, content_type = signed_request(self.session, "POST", f"{self.base}/sparql", data=sparql.encode(),
                                             headers={"Content-Type": "application/sparql-query", "Accept": accept})
         return json.loads(body) if "json" in content_type else body.decode()
+
+    def rest(self, path, params=None):
+        """REST API（/v1/…）を呼んで JSON を返す。"""
+        if not self.api_base:
+            raise ApiError(404, json.dumps({"error": "REST API がありません。setup_aws.py で環境を更新してください"}))
+        query = urlencode({k: v for k, v in (params or {}).items() if v is not None})
+        body, _ = signed_request(self.session, "GET", f"{self.api_base}{path}" + (f"?{query}" if query else ""))
+        return json.loads(body)
 
     def status(self, reload=False):
         body, _ = signed_request(self.session, "GET", f"{self.base}/status" + ("?reload=1" if reload else ""))

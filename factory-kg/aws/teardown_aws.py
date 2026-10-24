@@ -44,8 +44,9 @@ def leftovers(session, owner, account):
     for bucket in (f"{name}-graph-{account}", artifacts_bucket_name(owner, account)):
         if not missing(lambda: s3.head_bucket(Bucket=bucket), "404", "NoSuchBucket"):
             found.append(("S3 バケット", bucket))
-    if not missing(lambda: lam.get_function(FunctionName=f"{name}-sparql"), "ResourceNotFoundException"):
-        found.append(("Lambda", f"{name}-sparql"))
+    for fn in ("sparql", "api"):
+        if not missing(lambda: lam.get_function(FunctionName=f"{name}-{fn}"), "ResourceNotFoundException"):
+            found.append(("Lambda", f"{name}-{fn}"))
     for group in logs.describe_log_groups(logGroupNamePrefix=f"/aws/lambda/{name}-")["logGroups"]:
         found.append(("CloudWatch Logs", group["logGroupName"]))
     return found

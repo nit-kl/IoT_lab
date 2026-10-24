@@ -33,6 +33,7 @@ replay の環境があるときは、`python tools/generate_ttl.py --owner <owne
 python aws/setup_aws.py --owner <owner>                 # 作成・更新 + グラフの生成・公開（数分）
 python tools/sparql.py --owner <owner> --status         # 公開中のグラフの情報
 python tools/sparql.py --owner <owner> --all            # queries/*.rq を AWS 上で実行
+python tools/rest.py --owner <owner> /v1/equipment/CNC-01   # REST API（構造 + replay の値。仕様は aws/openapi.yaml）
 python tools/publish_ttl.py --owner <owner>             # グラフの更新（SHACL 検証 → S3 へ公開）
 python tools/publish_ttl.py --owner <owner> --rollback  # 1 つ前の版に戻す
 python aws/teardown_aws.py --owner <owner>              # 削除（replay には触れない）
@@ -43,10 +44,28 @@ python aws/teardown_aws.py --owner <owner>              # 削除（replay には
 | CloudFormation スタック | `xcp-factorykg-<owner>` | replay（`xcp-factory-<owner>`）とは別。タグ `Project=xcp-factorykg` |
 | S3 バケット（グラフ） | `xcp-factorykg-<owner>-graph-<アカウントID>` | 公開中のグラフ `kg/current.nq`（N-Quads、名前付きグラフ入り）。バージョニングあり・古い版は 30 日で削除 |
 | S3 バケット（Lambda コード用） | `xcp-factorykg-<owner>-artifacts-<アカウントID>` | `setup_aws.py` がスタック外で作成 |
-| Lambda | `xcp-factorykg-<owner>-sparql` | Python 3.13・arm64・512 MB。pyoxigraph を同梱。S3 の ETag を 30 秒ごとに確認して読み直す |
-| Lambda Function URL | 上記の URL | IAM 認証（SigV4、サービス名 `lambda`）。`GET/POST /sparql`（読み取りのみ）、`GET /status` |
+| Lambda | `xcp-factorykg-<owner>-sparql` | SPARQL エンドポイント。Python 3.13・arm64・512 MB。pyoxigraph を同梱。S3 の ETag を 30 秒ごとに確認して読み直す |
+| Lambda | `xcp-factorykg-<owner>-api` | REST API（`/v1/…`、仕様は `aws/openapi.yaml`）。グラフを同じ方法で読み込み、値はグラフに書かれた replay の API（`xcp-factory-<owner>-api` だけ）を呼ぶ |
+| Lambda Function URL | 上記それぞれ | IAM 認証（SigV4、サービス名 `lambda`）。SPARQL は `GET/POST /sparql`（読み取りのみ）・`GET /status`、REST は `GET /v1/…` |
 
-Postman: `python tools/postman.py env --owner <owner>` で Environment を作り、`postman/xcp-factorykg.postman_collection.json` と一緒にインポートする。
+Postman: `python tools/postman.py env --owner <owner>` で Environment を作り、`postman/xcp-factorykg.postman_collection.json`（SPARQL）・
+`postman/xcp-factorykg-rest.postman_collection.json`（REST）と一緒にインポートする。
+
+## REST API
+
+F/E アプリや MCP サーバー向けの窓口。SPARQL を見せずに、構造（グラフ）と値（replay）を 1 つの JSON で返す。
+
+| エンドポイント | 内容 |
+|---|---|
+| `GET /v1/factory` | 工場 → サイト → エリア → ライン → 設備 の木 |
+| `GET /v1/equipment?line=&category=` | 設備の一覧（稼働状態つき） |
+| `GET /v1/equipment/{id}` | 設備の詳細（計測項目と最新値） |
+| `GET /v1/equipment/{id}/properties/{metric}` | 計測項目（単位・説明・コード表・取得 URL）と最新値 |
+| `GET /v1/equipment/{id}/properties/{metric}/readings` | 時系列（`minutes` / `source_from`・`source_to`、`limit`・`next`） |
+| `GET /v1/equipment/{id}/properties/{metric}/readings/summary` | 時系列の要約（最小・最大・平均、状態ごとの時間と変化の時刻） |
+| `GET /v1/codes/{key}`・`/v1/search?q=`・`/v1/status` | コード表・検索・状態 |
+
+コード値は意味を添えて返し（`{"value": 2, "label": "異常停止"}`）、replay が無いときも構造は返す（値は `{"unavailable": "理由"}`）。
 
 ## ローカルビューア
 
@@ -77,9 +96,11 @@ factory-kg/
 │   ├── postman.py       Postman のコレクション（queries から生成）・Environment を作る
 │   ├── bench_load.py    グラフの大きさごとの読み込み時間を測る（ローカル / Lambda）
 │   ├── kg_viewer.py     ローカルビューアのサーバー（画面の配信と、署名付きの中継）
+│   ├── rest.py          REST API を呼ぶ CLI
 │   ├── kgapi.py         SigV4 署名付きの呼び出し
 │   └── kgcommon.py      名前空間・ファイル・名前付きグラフの共通定義
-├── aws/                 CloudFormation（template.yaml）、setup / teardown、lambda/sparql.py（SPARQL エンドポイント）
+├── aws/                 CloudFormation（template.yaml）、setup / teardown、openapi.yaml（REST API の仕様）、
+│                        lambda/（sparql.py・api.py・domain.py＝REST のドメイン層・graphstore.py＝グラフの読み込み）
 ├── queries/*.rq         代表的な SPARQL
 ├── postman/             Postman コレクション
 ├── viewer/              ローカルビューアの画面（index.html / app.js / style.css、画面が使う SPARQL は viewer/queries/）
