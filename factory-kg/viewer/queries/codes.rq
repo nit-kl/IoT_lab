@@ -1,0 +1,6 @@
+# ビューア: コード表（値 → 意味）
+SELECT ?scheme ?notation ?label WHERE {
+  ?code skos:inScheme ?scheme ; skos:notation ?notation ; skos:prefLabel ?label .
+  FILTER (LANG(?label) = "ja")
+}
+ORDER BY ?scheme ?notation

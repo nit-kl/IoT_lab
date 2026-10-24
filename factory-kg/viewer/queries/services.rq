@@ -1,0 +1,8 @@
+# ビューア: 値を返す API（データサービス）と URL テンプレート
+SELECT ?service ?label ?base ?latestTemplate ?readingsTemplate WHERE {
+  ?service a dcat:DataService ;
+           dcat:endpointURL ?base ;
+           xf:latestTemplate/hydra:template ?latestTemplate ;
+           xf:readingsTemplate/hydra:template ?readingsTemplate .
+  OPTIONAL { ?service rdfs:label ?label FILTER (LANG(?label) = "ja") }
+}

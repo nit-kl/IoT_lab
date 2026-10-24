@@ -7,7 +7,7 @@
 - 確認手順: [docs/作業手順.md](docs/作業手順.md)
 - 標準語彙の使い分け: [ontology/README.md](ontology/README.md)
 
-現在の状況: **ステップ 2（AWS 上の SPARQL エンドポイント）まで**。ステップ 3（ローカルビューア）はこれから。
+現在の状況: **ステップ 3（ローカルビューア）まで**。
 
 ## クイックスタート（ローカル、AWS 不要）
 
@@ -48,6 +48,20 @@ python aws/teardown_aws.py --owner <owner>              # 削除（replay には
 
 Postman: `python tools/postman.py env --owner <owner>` で Environment を作り、`postman/xcp-factorykg.postman_collection.json` と一緒にインポートする。
 
+## ローカルビューア
+
+```powershell
+python tools/kg_viewer.py --owner <owner>      # http://127.0.0.1:8765/ が開く。終わったら Ctrl+C
+```
+
+- 工場 → サイト → エリア → ライン → 設備 → 計測項目 のグラフ。設備の縁の色は稼働状態（灰 = 停止、緑 = 稼働、赤 = 異常停止）
+- ノードを選ぶと、日本語名・標準語彙のクラス・関係（どの名前付きグラフの記述か）を表示。計測項目は、グラフに書かれた
+  replay の API から最新値と時系列を取って表示する
+- 検索・ライン／分類の絞り込み・SPARQL の直接実行。`#q=CNC-01` のような URL で、その設備を選んだ状態で開ける
+- 自動更新（1 分ごと）は画面を表示している間だけ。開きっぱなしにすると replay の DB が止まらないので、使い終わったら閉じて Ctrl+C
+- 仕組み: この PC だけで動く小さなサーバー（127.0.0.1）が画面を配信し、aws login の認証情報で KG・replay に署名して中継する。
+  中継するのは KG の SPARQL と、グラフに書かれた replay の API（latest / readings / status）だけ
+
 ## ファイル構成
 
 ```
@@ -62,13 +76,15 @@ factory-kg/
 │   ├── sparql.py        AWS 上の SPARQL エンドポイントに問い合わせる CLI
 │   ├── postman.py       Postman のコレクション（queries から生成）・Environment を作る
 │   ├── bench_load.py    グラフの大きさごとの読み込み時間を測る（ローカル / Lambda）
+│   ├── kg_viewer.py     ローカルビューアのサーバー（画面の配信と、署名付きの中継）
 │   ├── kgapi.py         SigV4 署名付きの呼び出し
 │   └── kgcommon.py      名前空間・ファイル・名前付きグラフの共通定義
 ├── aws/                 CloudFormation（template.yaml）、setup / teardown、lambda/sparql.py（SPARQL エンドポイント）
 ├── queries/*.rq         代表的な SPARQL
 ├── postman/             Postman コレクション
+├── viewer/              ローカルビューアの画面（index.html / app.js / style.css、画面が使う SPARQL は viewer/queries/）
 ├── examples/instances.sample.ttl   同梱サンプル CSV から生成した例（API の URL は仮）
-├── tests/               生成・検証（わざと壊したグラフの検出）・検索・SPARQL Lambda のテスト
+├── tests/               生成・検証（わざと壊したグラフの検出）・検索・SPARQL Lambda・ビューア（中継の制限など）のテスト
 └── docs/
 ```
 

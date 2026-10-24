@@ -30,17 +30,25 @@ def stack_outputs(session, name):
     return {o["OutputKey"]: o["OutputValue"] for o in stack.get("Outputs", [])}
 
 
-def signed_request(session, method, url, data=None, headers=None):
-    """SigV4（サービス名 lambda）で署名して呼び、(本文 bytes, Content-Type) を返す。"""
+def signed_call(session, method, url, data=None, headers=None):
+    """SigV4（サービス名 lambda）で署名して呼び、(ステータス, 本文 bytes, Content-Type) を返す（エラーでも例外にしない）。"""
     headers = dict(headers or {})
     req = AWSRequest(method=method, url=url, data=data, headers=headers)
     SigV4Auth(session.get_credentials().get_frozen_credentials(), "lambda", session.region_name).add_auth(req)
     http = urllib.request.Request(url, data=data, method=method, headers=dict(req.headers))
     try:
         with urllib.request.urlopen(http, timeout=60) as res:
-            return res.read(), res.headers.get("Content-Type", "")
+            return res.status, res.read(), res.headers.get("Content-Type", "")
     except urllib.error.HTTPError as e:
-        raise ApiError(e.code, e.read()) from None
+        return e.code, e.read(), e.headers.get("Content-Type", "")
+
+
+def signed_request(session, method, url, data=None, headers=None):
+    """signed_call と同じだが、成功時は (本文 bytes, Content-Type) を返し、エラーは ApiError にする。"""
+    status, body, content_type = signed_call(session, method, url, data, headers)
+    if status >= 400:
+        raise ApiError(status, body)
+    return body, content_type
 
 
 class KgClient:

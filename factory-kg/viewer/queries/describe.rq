@@ -1,0 +1,7 @@
+# ビューア: 選んだノードの関係（下の NODE 変数の位置を、ビューアが選んだノードの IRI に置き換える）。どの名前付きグラフの記述かも返す
+SELECT ?p ?pLabel ?o ?oLabel ?graph WHERE {
+  GRAPH ?graph { $NODE ?p ?o }
+  OPTIONAL { ?p rdfs:label ?pLabel FILTER (LANG(?pLabel) = "ja") }
+  OPTIONAL { ?o rdfs:label|skos:prefLabel ?oLabel FILTER (LANG(?oLabel) = "ja") }
+}
+ORDER BY ?p ?o
