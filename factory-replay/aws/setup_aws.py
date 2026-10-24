@@ -123,7 +123,7 @@ def apply_schema(db):
     db.wake(resume_wait_sec=300)
     for sql in schema_statements():
         db.execute(sql)
-    print("テーブルと関数を作成しました: staging_readings, readings, replay_state, start_replay()")
+    print("テーブルと関数を作成しました: staging_readings, readings, replay_state, start_replay(), reset_replay()")
 
 
 def main():

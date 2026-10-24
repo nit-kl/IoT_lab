@@ -57,6 +57,7 @@ SigV4 署名（サービス名 `lambda`）が必要で、署名なしは 403。�
 | `GET /latest` | 設備・メトリクスごとの最新値（直近 5,000 行から探す） | `equipment`, `metric`, `line` |
 | `GET /readings` | 時系列データ（seq 順） | `equipment`, `metric`, `line`, 範囲, `limit`（既定 1,000・上限 5,000）, `next` |
 | `GET /summary` | 設備・メトリクスごとの件数・平均・最小・最大、稼働率・停止分・異常停止分 | `equipment`, `line`, 範囲（省略時は直近 60 分） |
+| `POST /reset` | ④ リセット（下記） | 本文 JSON `{"speed": 720}` / `{"stop": true}` |
 
 範囲の指定（組み合わせ可）:
 
@@ -77,6 +78,18 @@ SigV4 署名（サービス名 `lambda`）が必要で、署名なしは 403。�
 | CLI | `python tools/cli.py --owner <owner> status`（`latest` / `readings` / `summary`。`--help` で一覧） |
 
 詳しい確認手順は [docs/作業手順.md](../docs/作業手順.md) の「5. ステップ 4」。
+
+## ④ リセット
+
+```
+python tools/cli.py --owner <owner> reset                 # 今の速度で最初から
+python tools/cli.py --owner <owner> reset --speed 720     # 速度を変えて最初から（1 日分が約 2 分）
+python tools/cli.py --owner <owner> reset --stop          # 空にするだけ（再生しない）
+```
+
+- `readings` を空にして、DB に取り込み済みの CSV（`staging_readings`）を先頭から再生し直す。**S3 の CSV には触れない**
+- 取り込み中（`loading`）は 409 で断る。別の CSV で始めたいときはリセットではなく、その CSV をアップロードする
+- Postman ではコレクションの 11〜14。確認手順は [docs/作業手順.md](../docs/作業手順.md) の「6. ステップ 5」
 
 - テーブル定義は `aws/schema.sql`。`setup_aws.py` が Data API で作成する（何度実行しても同じ結果）
 - 使っていない間の費用は Aurora のストレージ代（1 GB 未満なら月 1 ドル未満）とシークレット代（月 $0.40）程度。

@@ -38,9 +38,10 @@ def load(bucket, key):
     log(msg="取り込み開始", bucket=bucket, key=key)
     # 取り込み中は replayer を止める（loading の間は replayer も何もしない）
     schedule.set_enabled(False)
+    # source_key は取り込みに成功してから start_replay() が書き換える（それまでは staging の中身の CSV のまま）
     db.execute(
-        "UPDATE replay_state SET status = 'loading', source_key = :key, message = NULL, updated_at = now() WHERE id = 1",
-        {"key": key}, resume_wait_sec=150)
+        "UPDATE replay_state SET status = 'loading', message = :msg, updated_at = now() WHERE id = 1",
+        {"msg": f"{key} を取り込み中"}, resume_wait_sec=150)
 
     for attempt in range(CREDENTIALS_RETRIES + 1):
         try:

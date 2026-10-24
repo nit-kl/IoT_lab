@@ -1,21 +1,44 @@
 {
   "info": {
     "name": "xcp-factory HTTP API",
-    "description": "工場 CSV リプレイの HTTP API（Lambda Function URL、IAM 認証）。\n\n使い方:\n1. `python tools/postman_env.py --owner <owner>` で Environment ファイルを作り、インポートする\n2. 右上の Environment で `xcp-factory-<owner>` を選ぶ\n3. 各リクエストを Send\n\n認証はコレクション全体に AWS Signature（サービス名 lambda）を設定済み。403 で token expired などと出たら、postman_env.py を再実行して Environment をインポートし直す。\n\n時刻のパラメータはタイムゾーンを省略すると日本時間として扱う（クエリに + を書くと空白に化けるため、+09:00 は付けない）。",
+    "description": "工場 CSV リプレイの HTTP API（Lambda Function URL、IAM 認証）。\n\n使い方:\n1. `python tools/postman_env.py --owner <owner>` で Environment ファイルを作り、インポートする\n2. 右上の Environment で `xcp-factory-<owner>` を選ぶ\n3. 各リクエストを Send（11〜14 の reset は readings を空にするので注意）\n\n認証はコレクション全体に AWS Signature（サービス名 lambda）を設定済み。403 で token expired などと出たら、postman_env.py を再実行して Environment をインポートし直す。\n\n時刻のパラメータはタイムゾーンを省略すると日本時間として扱う（クエリに + を書くと空白に化けるため、+09:00 は付けない）。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
     "type": "awsv4",
     "awsv4": [
-      { "key": "accessKey", "value": "{{accessKeyId}}", "type": "string" },
-      { "key": "secretKey", "value": "{{secretAccessKey}}", "type": "string" },
-      { "key": "sessionToken", "value": "{{sessionToken}}", "type": "string" },
-      { "key": "region", "value": "{{region}}", "type": "string" },
-      { "key": "service", "value": "lambda", "type": "string" }
+      {
+        "key": "accessKey",
+        "value": "{{accessKeyId}}",
+        "type": "string"
+      },
+      {
+        "key": "secretKey",
+        "value": "{{secretAccessKey}}",
+        "type": "string"
+      },
+      {
+        "key": "sessionToken",
+        "value": "{{sessionToken}}",
+        "type": "string"
+      },
+      {
+        "key": "region",
+        "value": "{{region}}",
+        "type": "string"
+      },
+      {
+        "key": "service",
+        "value": "lambda",
+        "type": "string"
+      }
     ]
   },
   "variable": [
-    { "key": "next", "value": "0" }
+    {
+      "key": "next",
+      "value": "0"
+    }
   ],
   "item": [
     {
@@ -34,7 +57,15 @@
       ],
       "request": {
         "method": "GET",
-        "url": { "raw": "{{baseUrl}}/status", "host": ["{{baseUrl}}"], "path": ["status"] }
+        "url": {
+          "raw": "{{baseUrl}}/status",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "status"
+          ]
+        }
       }
     },
     {
@@ -53,7 +84,15 @@
       ],
       "request": {
         "method": "GET",
-        "url": { "raw": "{{baseUrl}}/latest", "host": ["{{baseUrl}}"], "path": ["latest"] }
+        "url": {
+          "raw": "{{baseUrl}}/latest",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "latest"
+          ]
+        }
       }
     },
     {
@@ -62,9 +101,18 @@
         "method": "GET",
         "url": {
           "raw": "{{baseUrl}}/latest?equipment=CNC-01",
-          "host": ["{{baseUrl}}"],
-          "path": ["latest"],
-          "query": [{ "key": "equipment", "value": "CNC-01" }]
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "latest"
+          ],
+          "query": [
+            {
+              "key": "equipment",
+              "value": "CNC-01"
+            }
+          ]
         }
       }
     },
@@ -88,14 +136,33 @@
         "method": "GET",
         "url": {
           "raw": "{{baseUrl}}/readings?equipment=CNC-01&metric=spindle_load&source_from=2026-10-01T14:00&source_to=2026-10-01T14:40&limit=10",
-          "host": ["{{baseUrl}}"],
-          "path": ["readings"],
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "readings"
+          ],
           "query": [
-            { "key": "equipment", "value": "CNC-01" },
-            { "key": "metric", "value": "spindle_load" },
-            { "key": "source_from", "value": "2026-10-01T14:00" },
-            { "key": "source_to", "value": "2026-10-01T14:40" },
-            { "key": "limit", "value": "10" }
+            {
+              "key": "equipment",
+              "value": "CNC-01"
+            },
+            {
+              "key": "metric",
+              "value": "spindle_load"
+            },
+            {
+              "key": "source_from",
+              "value": "2026-10-01T14:00"
+            },
+            {
+              "key": "source_to",
+              "value": "2026-10-01T14:40"
+            },
+            {
+              "key": "limit",
+              "value": "10"
+            }
           ]
         }
       }
@@ -120,15 +187,37 @@
         "description": "4 を実行すると next が保存される。続けて Send すると次のページを取る（next が空になったら最後）。",
         "url": {
           "raw": "{{baseUrl}}/readings?equipment=CNC-01&metric=spindle_load&source_from=2026-10-01T14:00&source_to=2026-10-01T14:40&limit=10&next={{next}}",
-          "host": ["{{baseUrl}}"],
-          "path": ["readings"],
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "readings"
+          ],
           "query": [
-            { "key": "equipment", "value": "CNC-01" },
-            { "key": "metric", "value": "spindle_load" },
-            { "key": "source_from", "value": "2026-10-01T14:00" },
-            { "key": "source_to", "value": "2026-10-01T14:40" },
-            { "key": "limit", "value": "10" },
-            { "key": "next", "value": "{{next}}" }
+            {
+              "key": "equipment",
+              "value": "CNC-01"
+            },
+            {
+              "key": "metric",
+              "value": "spindle_load"
+            },
+            {
+              "key": "source_from",
+              "value": "2026-10-01T14:00"
+            },
+            {
+              "key": "source_to",
+              "value": "2026-10-01T14:40"
+            },
+            {
+              "key": "limit",
+              "value": "10"
+            },
+            {
+              "key": "next",
+              "value": "{{next}}"
+            }
           ]
         }
       }
@@ -139,11 +228,21 @@
         "method": "GET",
         "url": {
           "raw": "{{baseUrl}}/readings?minutes=30&limit=100",
-          "host": ["{{baseUrl}}"],
-          "path": ["readings"],
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "readings"
+          ],
           "query": [
-            { "key": "minutes", "value": "30" },
-            { "key": "limit", "value": "100" }
+            {
+              "key": "minutes",
+              "value": "30"
+            },
+            {
+              "key": "limit",
+              "value": "100"
+            }
           ]
         }
       }
@@ -152,7 +251,15 @@
       "name": "7. summary（反映時刻で直近 60 分）",
       "request": {
         "method": "GET",
-        "url": { "raw": "{{baseUrl}}/summary", "host": ["{{baseUrl}}"], "path": ["summary"] }
+        "url": {
+          "raw": "{{baseUrl}}/summary",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "summary"
+          ]
+        }
       }
     },
     {
@@ -161,11 +268,21 @@
         "method": "GET",
         "url": {
           "raw": "{{baseUrl}}/summary?source_from=2026-10-01T06:00&source_to=2026-10-01T22:00",
-          "host": ["{{baseUrl}}"],
-          "path": ["summary"],
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "summary"
+          ],
           "query": [
-            { "key": "source_from", "value": "2026-10-01T06:00" },
-            { "key": "source_to", "value": "2026-10-01T22:00" }
+            {
+              "key": "source_from",
+              "value": "2026-10-01T06:00"
+            },
+            {
+              "key": "source_to",
+              "value": "2026-10-01T22:00"
+            }
           ]
         }
       }
@@ -177,7 +294,9 @@
           "listen": "test",
           "script": {
             "type": "text/javascript",
-            "exec": ["pm.test('400 が返る', () => pm.response.to.have.status(400));"]
+            "exec": [
+              "pm.test('400 が返る', () => pm.response.to.have.status(400));"
+            ]
           }
         }
       ],
@@ -185,9 +304,18 @@
         "method": "GET",
         "url": {
           "raw": "{{baseUrl}}/readings?limit=99999",
-          "host": ["{{baseUrl}}"],
-          "path": ["readings"],
-          "query": [{ "key": "limit", "value": "99999" }]
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "readings"
+          ],
+          "query": [
+            {
+              "key": "limit",
+              "value": "99999"
+            }
+          ]
         }
       }
     },
@@ -198,14 +326,197 @@
           "listen": "test",
           "script": {
             "type": "text/javascript",
-            "exec": ["pm.test('403 が返る（IAM 認証が効いている）', () => pm.response.to.have.status(403));"]
+            "exec": [
+              "pm.test('403 が返る（IAM 認証が効いている）', () => pm.response.to.have.status(403));"
+            ]
           }
         }
       ],
       "request": {
-        "auth": { "type": "noauth" },
+        "auth": {
+          "type": "noauth"
+        },
         "method": "GET",
-        "url": { "raw": "{{baseUrl}}/status", "host": ["{{baseUrl}}"], "path": ["status"] }
+        "url": {
+          "raw": "{{baseUrl}}/status",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "status"
+          ]
+        }
+      }
+    },
+    {
+      "name": "11. reset（今の速度で最初から）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('running で 0 件から', () => { const b = pm.response.json(); pm.expect(b.status).to.eql('running'); pm.expect(b.reflected_rows).to.eql(0); });"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "description": "readings を空にして、取り込み済みの CSV を最初から再生し直す。S3 は読み直さない。",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/reset",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "reset"
+          ]
+        }
+      }
+    },
+    {
+      "name": "12. reset（720 倍速で最初から）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('速度が 720', () => pm.expect(pm.response.json().speed).to.eql(720));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "description": "1 日分が約 2 分で流れる。1 status で進み具合を見る。",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"speed\": 720}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/reset",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "reset"
+          ]
+        }
+      }
+    },
+    {
+      "name": "13. reset（空にして停止）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));",
+              "pm.test('idle', () => pm.expect(pm.response.json().status).to.eql('idle'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "description": "readings を空にするだけで再生しない。再生するには 11 か 12 を送る。",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"stop\": true}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/reset",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "reset"
+          ]
+        }
+      }
+    },
+    {
+      "name": "14. reset（60 倍速に戻す）",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 が返る', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "description": "既定の速度に戻して最初から再生する。",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"speed\": 60}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/reset",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "reset"
+          ]
+        }
       }
     }
   ]

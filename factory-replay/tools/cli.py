@@ -5,6 +5,9 @@
     python tools/cli.py --owner kojima readings --equipment CNC-01 --metric spindle_load --minutes 30
     python tools/cli.py --owner kojima readings --source-from 2026-10-01T14:00 --source-to 2026-10-01T15:00 --all --csv > out.csv
     python tools/cli.py --owner kojima summary --minutes 60
+    python tools/cli.py --owner kojima reset                 # 同じ速度で最初から（S3 は読み直さない）
+    python tools/cli.py --owner kojima reset --speed 720     # 速度を変えて最初から
+    python tools/cli.py --owner kojima reset --stop          # 空にするだけ（再生しない）
 
 --json を付けると API の応答をそのまま表示する。
 """
@@ -46,13 +49,7 @@ def cmd_status(client, args):
     s = client.get("/status")
     if args.json:
         return s
-    labels = [("status", "状態"), ("source_key", "CSV"), ("speed", "速度"), ("reflected_rows", "反映済み"),
-              ("total_rows", "全行数"), ("percent", "進捗 %"), ("csv_position", "CSV 上の現在位置"),
-              ("csv_end", "CSV の終端"), ("started_at", "開始"), ("estimated_finish", "完了見込み"),
-              ("updated_at", "最終更新"), ("message", "メッセージ")]
-    for key, label in labels:
-        if s.get(key) is not None:
-            print(f"{label:<12} {s[key]}")
+    return cmd_status_print(s)
 
 
 def cmd_latest(client, args):
@@ -96,6 +93,30 @@ def cmd_summary(client, args):
         print_table(e["metrics"], ["metric", "unit", "count", "avg", "min", "max"])
 
 
+def cmd_reset(client, args):
+    body = {"stop": args.stop}
+    if args.speed is not None:
+        body["speed"] = args.speed
+    s = client.request("POST", "/reset", body=body)
+    if args.json:
+        return s
+    if s["status"] == "idle":
+        print("readings を空にしました（再生はしていません。再生するには reset を --stop なしで実行）")
+    else:
+        print(f"最初から再生し直します（速度 {s['speed']:g} 倍）")
+    return cmd_status_print(s)
+
+
+def cmd_status_print(s):
+    labels = [("status", "状態"), ("source_key", "CSV"), ("speed", "速度"), ("reflected_rows", "反映済み"),
+              ("total_rows", "全行数"), ("percent", "進捗 %"), ("csv_position", "CSV 上の現在位置"),
+              ("csv_end", "CSV の終端"), ("started_at", "開始"), ("estimated_finish", "完了見込み"),
+              ("updated_at", "最終更新"), ("message", "メッセージ")]
+    for key, label in labels:
+        if s.get(key) is not None:
+            print(f"{label:<12} {s[key]}")
+
+
 def add_filters(p, metric=True):
     p.add_argument("--equipment", help="設備 ID（例: CNC-01）")
     if metric:
@@ -128,10 +149,14 @@ def main():
     p = sub.add_parser("summary", help="設備ごとの集計（既定は反映時刻で直近 60 分）")
     add_filters(p, metric=False)
     p.set_defaults(metric=None)
+    p = sub.add_parser("reset", help="readings を空にして最初から再生し直す（S3 は読み直さない）")
+    p.add_argument("--speed", type=float, help="再生速度（0.1〜100000。省略時は今の速度のまま）")
+    p.add_argument("--stop", action="store_true", help="空にするだけで再生しない")
 
     args = ap.parse_args()
     client = Client(args.owner, args.region)
-    command = {"status": cmd_status, "latest": cmd_latest, "readings": cmd_readings, "summary": cmd_summary}
+    command = {"status": cmd_status, "latest": cmd_latest, "readings": cmd_readings, "summary": cmd_summary,
+               "reset": cmd_reset}
     try:
         result = command[args.command](client, args)
     except ApiError as e:

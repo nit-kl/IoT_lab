@@ -54,6 +54,7 @@ INSERT INTO replay_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 -- CSV を staging_readings に取り込み、readings を空にしてリプレイを開始する（loader Lambda が呼ぶ）。
 -- 1 トランザクションで行うので、失敗したら元の状態のまま status = 'error' になる。
 -- readings の TRUNCATE は取り込み完了後に行い、取り込み中も readings を参照できるようにしている。
+-- source_key は常に「いま staging_readings に入っている CSV」を指す（失敗した CSV の名前は message に入れる）。
 CREATE OR REPLACE FUNCTION start_replay(p_bucket TEXT, p_key TEXT, p_region TEXT)
 RETURNS TEXT
 LANGUAGE plpgsql
@@ -84,8 +85,38 @@ BEGIN
   RETURN 'running';
 EXCEPTION WHEN OTHERS THEN
   UPDATE replay_state
-     SET status = 'error', source_key = p_key, message = left(SQLERRM, 500), updated_at = clock_timestamp()
+     SET status = 'error', message = left(p_key || ': ' || SQLERRM, 500), updated_at = clock_timestamp()
    WHERE id = 1;
   RETURN 'error';
+END;
+$$;
+
+-- readings を空にして、staging_readings の先頭から再生し直す（HTTP API の POST /reset が呼ぶ）。
+-- S3 は読み直さない。p_speed が NULL なら速度は変えない。p_stop が true なら空にするだけで再生しない（idle）。
+-- 戻り値: running / idle、または受け付けられない理由（loading = 取り込み中、empty = CSV 未取り込み）
+CREATE OR REPLACE FUNCTION reset_replay(p_speed REAL, p_stop BOOLEAN)
+RETURNS TEXT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_status TEXT;
+  v_total  BIGINT;
+BEGIN
+  -- replayer と同じく replay_state → readings の順にロックする（デッドロックを避ける）
+  SELECT status, total_rows INTO v_status, v_total FROM replay_state WHERE id = 1 FOR UPDATE;
+  IF v_status = 'loading' THEN
+    RETURN 'loading';
+  END IF;
+  IF v_total = 0 AND NOT p_stop THEN
+    RETURN 'empty';
+  END IF;
+
+  TRUNCATE readings;
+  UPDATE replay_state
+     SET status = CASE WHEN p_stop THEN 'idle' ELSE 'running' END,
+         started_at = clock_timestamp(), cursor_seq = 0, speed = COALESCE(p_speed, speed),
+         message = NULL, updated_at = clock_timestamp()
+   WHERE id = 1;
+  RETURN CASE WHEN p_stop THEN 'idle' ELSE 'running' END;
 END;
 $$;

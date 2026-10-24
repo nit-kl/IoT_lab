@@ -1,13 +1,15 @@
 """HTTP API（Lambda Function URL、IAM 認証）。DB の中身を JSON で返す。
 
-    GET /status    リプレイの進み具合
-    GET /latest    設備・メトリクスごとの最新値
-    GET /readings  時系列データ（seq 順。next で続きを取る）
-    GET /summary   設備・メトリクスごとの集計と稼働状態
+    GET  /status    リプレイの進み具合
+    GET  /latest    設備・メトリクスごとの最新値
+    GET  /readings  時系列データ（seq 順。next で続きを取る）
+    GET  /summary   設備・メトリクスごとの集計と稼働状態
+    POST /reset     readings を空にして最初から再生し直す（S3 は読み直さない）
 
 時刻はすべて日本時間（+09:00）の ISO 8601 で返す。
 """
 
+import base64
 import json
 import os
 import re
@@ -15,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import ClientError
 
+import schedule
 from dataapi import DataApi
 
 db = DataApi(os.environ["CLUSTER_ARN"], os.environ["SECRET_ARN"], os.environ["DATABASE"])
@@ -32,6 +35,10 @@ class BadRequest(Exception):
 
 
 class Busy(Exception):
+    pass
+
+
+class Conflict(Exception):
     pass
 
 
@@ -259,12 +266,54 @@ def get_summary(q):
     return {"window": window, "equipment": list(equipment.values())}
 
 
+MIN_SPEED, MAX_SPEED = 0.1, 100000
+
+
+def post_reset(q, body):
+    speed = body.get("speed")
+    stop = body.get("stop", False)
+    if speed is not None:
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not MIN_SPEED <= speed <= MAX_SPEED:
+            raise BadRequest(f"speed は {MIN_SPEED}〜{MAX_SPEED} の数値で指定してください")
+        speed = float(speed)
+    if not isinstance(stop, bool):
+        raise BadRequest("stop は true / false で指定してください")
+
+    # 実行中の replayer と競合させないよう、先にスケジュールを止めてから DB を戻す
+    schedule.set_enabled(False)
+    result = query("SELECT reset_replay(CAST(:speed AS real), :stop) AS result", {"speed": speed, "stop": stop})[0]["result"]
+    if result == "loading":
+        schedule.set_enabled(True)  # 取り込み中は loader がスケジュールを動かしているので戻す
+        raise Conflict("CSV の取り込み中のためリセットできません。取り込み完了後に再実行してください")
+    if result == "empty":
+        raise Conflict("CSV がまだ取り込まれていません。先に incoming/ に CSV をアップロードしてください")
+    if result == "running":
+        schedule.set_enabled(True)
+    return get_status(q)
+
+
 ROUTES = {
     ("GET", "/status"): get_status,
     ("GET", "/latest"): get_latest,
     ("GET", "/readings"): get_readings,
     ("GET", "/summary"): get_summary,
+    ("POST", "/reset"): post_reset,
 }
+
+
+def parse_body(event):
+    raw = event.get("body") or ""
+    if event.get("isBase64Encoded"):
+        raw = base64.b64decode(raw).decode()
+    if not raw.strip():
+        return {}
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        raise BadRequest("本文は JSON で送ってください（例: {\"speed\": 60}）") from None
+    if not isinstance(body, dict):
+        raise BadRequest("本文は JSON オブジェクトで送ってください（例: {\"speed\": 60}）")
+    return body
 
 
 def respond(code, body, headers=None):
@@ -283,9 +332,14 @@ def handler(event, context):
         return respond(404, {"error": f"{method} {path} はありません",
                              "endpoints": [f"{m} {p}" for m, p in ROUTES]})
     try:
-        return respond(200, route(event.get("queryStringParameters") or {}))
+        q = event.get("queryStringParameters") or {}
+        if method == "POST":
+            return respond(200, route(q, parse_body(event)))
+        return respond(200, route(q))
     except BadRequest as e:
         return respond(400, {"error": str(e)})
+    except Conflict as e:
+        return respond(409, {"error": str(e)})
     except Busy as e:
         return respond(503, {"error": str(e)}, {"Retry-After": "60"})
     except ClientError as e:
