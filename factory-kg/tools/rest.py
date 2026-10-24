@@ -20,6 +20,11 @@ def main():
     ap.add_argument("path", help="/v1/… のパス")
     ap.add_argument("params", nargs="*", help="クエリパラメータ（名前=値）")
     args = ap.parse_args()
+    # Git Bash は /v1/… を Windows のパス（C:/Program Files/Git/v1/…）に書き換えるので、v1/ 以降を使う。v1/… の形でも受け付ける
+    marker = args.path.replace("\\", "/").find("v1/")
+    if marker < 0:
+        ap.error(f"パスは /v1/… で指定してください: {args.path}")
+    args.path = "/" + args.path.replace("\\", "/")[marker:]
     params = {}
     for p in args.params:
         if "=" not in p:
