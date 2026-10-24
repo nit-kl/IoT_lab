@@ -258,7 +258,11 @@ def main():
     if args.csv:
         rows, source = rows_from_csv(args.csv), f"CSV: {args.csv.name}"
     else:
-        rows, source = rows_from_api(client), f"replay API: {api_url}latest"
+        try:
+            rows, source = rows_from_api(client), f"replay API: {api_url}latest"
+        except Exception as e:  # replay の apiclient.ApiError（503: DB 再開中 など）
+            raise SystemExit(f"replay の API から取得できません: {e}\n"
+                             "DB の再開中なら 30 秒ほど待って再実行してください") from None
 
     try:
         g = build_graph(rows, api_url, source)

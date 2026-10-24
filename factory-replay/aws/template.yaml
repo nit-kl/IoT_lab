@@ -12,7 +12,7 @@ Metadata:
       - 共有アカウント前提: 物理名はすべて StackName (xcp-factory-<owner>) 起点にする
       - DB へは Data API のみで接続。SG の ingress は開けない
     ref:
-      - at: ../../docs/実現方針.md
+      - at: ../docs/実現方針.md
         has: 全体方針・テーブル設計・コスト見積り
 
 Parameters:

@@ -3,8 +3,8 @@
 工場ラインのサンプルデータ（CSV）を S3 にアップロードすると RDB（Aurora PostgreSQL）に少しずつ反映され、
 HTTP API で取得・リセットできる検証用キット。低コスト優先で、使っていない間は DB が自動で一時停止する。
 
-- 方針・設計: [docs/実現方針.md](../docs/実現方針.md)
-- AWS での確認手順（作成から片付けまで）: [docs/作業手順.md](../docs/作業手順.md)
+- 方針・設計: [docs/実現方針.md](docs/実現方針.md)
+- AWS での確認手順（作成から片付けまで）: [docs/作業手順.md](docs/作業手順.md)
 
 ```mermaid
 flowchart LR
@@ -209,4 +209,4 @@ python aws/teardown_aws.py --owner <owner>
 ```
 
 データ用・Lambda コード用の S3 バケットを空にして、スタックごと削除する（DB の中身も消え、スナップショットも残さない）。
-削除後の確認方法は [docs/作業手順.md](../docs/作業手順.md) の「8. 後片付け」。
+削除後の確認方法は [docs/作業手順.md](docs/作業手順.md) の「8. 後片付け」。
