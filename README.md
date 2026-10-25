@@ -20,6 +20,10 @@ flowchart LR
   APP[factory-app<br/>① KG ② 3D ③ AI] -->|REST・SPARQL| K
 ```
 
+## 今後（デモをリアルにする）
+
+どこが Fake でどこが Real か、本物に近づけるステップは [docs/リアル化のステップ.md](docs/リアル化のステップ.md)。
+
 ## 使う順番
 
 1. factory-replay の環境を作り、CSV を流す（`factory-replay/docs/作業手順.md` の 0〜4 章）
