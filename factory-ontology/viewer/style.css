@@ -9,6 +9,8 @@ body { display: flex; flex-direction: column; background: var(--bg); color: var(
 .topbar { position: relative; display: flex; gap: 12px; align-items: center; padding: 10px 16px; background: #14213d; color: #fff; }
 .topbar h1 { margin: 0; font-size: 16px; white-space: nowrap; }
 .topbar input { flex: 1; max-width: 520px; padding: 6px 10px; border: 0; border-radius: 4px; font: inherit; }
+.graph-status { margin-left: auto; font-size: 12px; white-space: nowrap; }
+.graph-status.flash { color: #fde047; }
 button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--text); font: inherit; cursor: pointer; }
 button:hover { border-color: var(--accent); }
 #query-run { background: var(--accent); border-color: var(--accent); color: #fff; width: 100%; }

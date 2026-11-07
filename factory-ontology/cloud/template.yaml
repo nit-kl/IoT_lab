@@ -15,6 +15,11 @@ Parameters:
     Description: 抽出プログラムの証明書の CN。これ以外の証明書では役割を使えない
   CaCommonName:
     Type: String
+  CodeBucket:
+    Type: String
+    Description: Lambda のコードを置くバケット(setup_aws.py が作る)
+  CodeKey:
+    Type: String
 
 Resources:
   RawBucket:
@@ -34,6 +39,9 @@ Resources:
               SSEAlgorithm: AES256
       VersioningConfiguration:
         Status: Enabled
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
@@ -47,6 +55,12 @@ Resources:
               NoncurrentDays: 7
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 1
+          - Id: keep-few-graph-versions
+            Status: Enabled
+            Prefix: kg/
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+              NewerNoncurrentVersions: 3
       Tags:
         - { Key: Project, Value: xcp-factoryont }
         - { Key: Owner, Value: !Ref Owner }
@@ -130,6 +144,146 @@ Resources:
         - { Key: Project, Value: xcp-factoryont }
         - { Key: Owner, Value: !Ref Owner }
 
+  # S3 の通知は FIFO キューへ直接送れないので EventBridge を挟む。メッセージは新着の合図で、処理順は Lambda が決める
+  UpdateDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-update-dlq.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  UpdateQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-update.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      VisibilityTimeout: 720
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt UpdateDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  NewBatchRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-new-batch"
+      EventPattern:
+        source: [aws.s3]
+        detail-type: [Object Created]
+        detail:
+          bucket:
+            name: [!Ref RawBucket]
+          object:
+            key: [{ prefix: raw/ }]
+      Targets:
+        - Id: update-queue
+          Arn: !GetAtt UpdateQueue.Arn
+          SqsParameters:
+            MessageGroupId: graph
+
+  UpdateQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref UpdateQueue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt UpdateQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt NewBatchRule.Arn
+
+  UpdaterLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-updater"
+      RetentionInDays: 7
+
+  UpdaterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-updater"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: update-graph
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub "${RawBucket.Arn}/raw/*"
+                  - !Sub "${RawBucket.Arn}/kg/*"
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${RawBucket.Arn}/kg/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt RawBucket.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt UpdateQueue.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt UpdaterLogGroup.Arn
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  UpdaterFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: UpdaterLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-updater"
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: updater.handler
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt UpdaterRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      Environment:
+        Variables:
+          BUCKET: !Ref RawBucket
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  UpdaterTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt UpdateQueue.Arn
+      FunctionName: !Ref UpdaterFunction
+      BatchSize: 10
+
 Outputs:
   RawBucketName:
     Value: !Ref RawBucket
@@ -139,3 +293,5 @@ Outputs:
     Value: !GetAtt Profile.ProfileArn
   ExtractorRoleArn:
     Value: !GetAtt ExtractorRole.Arn
+  UpdateDeadLetterQueueUrl:
+    Value: !Ref UpdateDeadLetterQueue

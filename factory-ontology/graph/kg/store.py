@@ -10,11 +10,13 @@ PARAM = re.compile(r"\{\{(\w+)\}\}")
 SAFE_PARAM = re.compile(r"[\w:+.\-]*")
 
 
-def open_store(path=CURRENT, quads=None):
-    """インスタンス(N-Quads のファイルか quads)とオントロジーを読み込んだストアを返す。"""
+def open_store(path=CURRENT, quads=None, data=None):
+    """インスタンス(N-Quads のファイル、quads、または本文の data)とオントロジーを読み込んだストアを返す。"""
     store = Store()
     if quads is not None:
         store.bulk_extend(quads)
+    elif data is not None:
+        store.bulk_load(data, format=RdfFormat.N_QUADS)
     else:
         store.bulk_load(path=str(path), format=RdfFormat.N_QUADS)
     for ttl in sorted(ONTOLOGY_DIR.glob("*.ttl")):

@@ -26,9 +26,9 @@ HEADERS = {"X-Requested-By": "kg-viewer"}
 @pytest.fixture(scope="module")
 def server():
     store = open_store(quads=convert_tables(generate(datetime(2026, 11, 7, 12))[0]).quads)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(store, 0))
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(lambda: store, 0))
     port = httpd.server_address[1]
-    httpd.RequestHandlerClass = make_handler(store, port)
+    httpd.RequestHandlerClass = make_handler(lambda: store, port)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield port, store
     httpd.shutdown()
@@ -88,6 +88,10 @@ def test_named_query_runs(server):
 
 def test_summary_counts_nodes(server):
     assert next(i["count"] for i in get(server[0], "/api/summary") if i["name"] == "アラーム") == 36
+
+
+def test_status_reports_source(server):
+    assert get(server[0], "/api/status") == {"source": "手元"}
 
 
 def test_guards(server):

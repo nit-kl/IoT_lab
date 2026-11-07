@@ -68,6 +68,16 @@ def test_first_run_sends_everything(env):
     assert sent == {"T": 2} and sorted(ids(s3)) == [1, 2]
 
 
+def test_only_the_first_run_is_marked_full(env):
+    db, s3 = env
+    db.upsert(1, "a", BASE)
+    _, state = run(db, s3, {})
+    assert s3.rows()[0]["full"] is True
+    db.upsert(2, "b", BASE + timedelta(seconds=1))
+    run(db, s3, state)
+    assert s3.rows()[0]["full"] is False
+
+
 def test_no_change_uploads_nothing(env):
     db, s3 = env
     db.upsert(1, "a", BASE)
@@ -144,9 +154,10 @@ def test_batch_key_and_header(env):
     db.upsert(1, "a", BASE)
     run(db, s3, {})
     key = next(iter(s3.objects))
-    assert key.startswith("raw/2026/11/07/20261107T120000-") and key.endswith(".jsonl.gz")
+    assert key.startswith("raw/2026/11/07/20261107T120000000000-") and key.endswith(".jsonl.gz")
     assert s3.rows()[0]["tables"] == {"T": 1}
     assert batch_key(BASE, "x") < batch_key(BASE + timedelta(seconds=1), "a")
+    assert batch_key(BASE, "z") < batch_key(BASE + timedelta(milliseconds=1), "a")  # 同じ秒でも時刻の順に並ぶ
 
 
 def test_values_are_json_safe():

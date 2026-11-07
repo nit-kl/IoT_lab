@@ -8,9 +8,12 @@
 
 import argparse
 import hashlib
+import io
 import json
+import subprocess
 import sys
 import urllib.request
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -19,10 +22,21 @@ from botocore.exceptions import ClientError, WaiterError
 from cryptography import x509
 
 from certs import create_ca, create_client
-from naming import add_common_args, stack_name
+from naming import add_common_args, artifacts_bucket_name, stack_name
 
 HERE = Path(__file__).resolve().parent
 ONPREM = HERE.parent / "onprem"
+GRAPH = HERE.parent / "graph"
+WHEEL_DIR = HERE / ".cache" / "wheels"
+PYOXIGRAPH = "0.5.13"  # graph/requirements.txt と同じ版
+LAMBDA_FILES = {  # zip の中の名前 → 元のファイル
+    "updater.py": HERE / "lambda" / "updater.py",
+    "kg/__init__.py": GRAPH / "kg" / "__init__.py",
+    "kg/common.py": GRAPH / "kg" / "common.py",
+    "kg/transform.py": GRAPH / "kg" / "transform.py",
+    "kg/update.py": GRAPH / "kg" / "update.py",
+    "mapping/mapping.toml": GRAPH / "mapping" / "mapping.toml",
+}
 TEMPLATE = HERE / "template.yaml"
 CA_DIR = HERE / ".secrets"
 CLIENT_DIR = ONPREM / ".secrets"
@@ -69,6 +83,57 @@ def ensure_helper():
         sys.exit(f"aws_signing_helper のハッシュが公式の値と一致しません: {actual}")
     HELPER.write_bytes(body)
     print("aws_signing_helper を取得しました(ハッシュ確認済み)")
+
+
+def pyoxigraph_wheel():
+    """Lambda(Python 3.13、arm64)用の pyoxigraph を取得する。"""
+    pattern = f"pyoxigraph-{PYOXIGRAPH}-*aarch64*.whl"
+    found = sorted(WHEEL_DIR.glob(pattern))
+    if not found:
+        WHEEL_DIR.mkdir(parents=True, exist_ok=True)
+        subprocess.run([sys.executable, "-m", "pip", "download", f"pyoxigraph=={PYOXIGRAPH}", "--no-deps",
+                        "--platform", "manylinux_2_28_aarch64", "--platform", "manylinux2014_aarch64",
+                        "--python-version", "3.13", "--implementation", "cp", "--only-binary=:all:",
+                        "-d", str(WHEEL_DIR), "-q"], check=True)
+        found = sorted(WHEEL_DIR.glob(pattern))
+    if not found:
+        sys.exit(f"pyoxigraph {PYOXIGRAPH} の arm64 用の配布物が見つかりません")
+    return found[-1]
+
+
+def build_lambda_zip():
+    """コードと pyoxigraph を zip にする。内容が同じなら同じハッシュになる。"""
+    buffer, digest = io.BytesIO(), hashlib.sha256()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as out:
+        def add(name, data):
+            digest.update(name.encode() + b"\0" + data)
+            info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            info.external_attr = 0o644 << 16
+            out.writestr(info, data, zipfile.ZIP_DEFLATED)
+        for name, path in LAMBDA_FILES.items():
+            add(name, path.read_bytes())
+        with zipfile.ZipFile(pyoxigraph_wheel()) as wheel:
+            for item in sorted(wheel.namelist()):
+                if not item.endswith("/"):
+                    add(item, wheel.read(item))
+    return buffer.getvalue(), digest.hexdigest()[:16]
+
+
+def upload_code(session, owner, account, region):
+    """Lambda のコードを置く。バケットは Lambda の参照用で、公開はしない。"""
+    s3 = session.client("s3")
+    bucket = artifacts_bucket_name(owner, account)
+    try:
+        s3.head_bucket(Bucket=bucket)
+    except ClientError:
+        s3.create_bucket(Bucket=bucket, CreateBucketConfiguration={"LocationConstraint": region})
+        s3.put_public_access_block(Bucket=bucket, PublicAccessBlockConfiguration={
+            "BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": True, "RestrictPublicBuckets": True})
+        s3.put_bucket_tagging(Bucket=bucket, Tagging={"TagSet": [{"Key": "Project", "Value": "xcp-factoryont"}, {"Key": "Owner", "Value": owner}]})
+    body, code_hash = build_lambda_zip()
+    key = f"lambda/updater-{code_hash}.zip"
+    s3.put_object(Bucket=bucket, Key=key, Body=body)
+    return bucket, key
 
 
 def deploy(cfn, name, parameters):
@@ -119,8 +184,12 @@ def main():
     ca_key, ca_cert = ensure_ca(ca_name)
     key, cert = ensure_client(client_name, ca_key, ca_cert)
     ensure_helper()
-    cfn = boto3.Session(region_name=args.region).client("cloudformation")
-    deploy(cfn, name, {"Owner": args.owner, "CaCertificate": ca_cert.decode(), "ClientCommonName": client_name, "CaCommonName": ca_name})
+    session = boto3.Session(region_name=args.region)
+    account = session.client("sts").get_caller_identity()["Account"]
+    code_bucket, code_key = upload_code(session, args.owner, account, args.region)
+    cfn = session.client("cloudformation")
+    deploy(cfn, name, {"Owner": args.owner, "CaCertificate": ca_cert.decode(), "ClientCommonName": client_name, "CaCommonName": ca_name,
+                       "CodeBucket": code_bucket, "CodeKey": code_key})
     stack = cfn.describe_stacks(StackName=name)["Stacks"][0]
     outputs = {o["OutputKey"]: o["OutputValue"] for o in stack["Outputs"]}
     write_client_config(outputs, key, cert, args.region)

@@ -9,6 +9,7 @@ const COLORS = {
   ItemCategory: "#b45309", Alarm: "#dc2626", Stoppage: "#ea580c", MaintenanceWork: "#059669",
   DutyShift: "#475569", Person: "#334155", Role: "#64748b", RoleAssignment: "#94a3b8", Other: "#9ca3af",
 };
+const STATUS_POLL_MS = 3000;
 const QUERY_PARAM_LABELS = { EQUIPMENT: "設備(ID)", LOT: "ロット番号", AT: "日時", DATE: "日付", ID: "どのシステムの ID でも可" };
 
 let cy;
@@ -173,11 +174,37 @@ async function setupQueries() {
   });
 }
 
-async function setupSummary() {
+async function renderSummary() {
   const box = document.getElementById("summary");
-  for (const item of await api("/api/summary")) {
+  const items = await api("/api/summary");
+  box.replaceChildren();
+  for (const item of items) {
     box.append(el("span", item.name), el("span", item.count.toLocaleString(), "n"));
   }
+}
+
+// クラウドのグラフが更新されたら、表示の件数も取り直す
+async function watchStatus() {
+  const label = document.getElementById("graph-status");
+  let last;
+  const check = async () => {
+    try {
+      const status = await api("/api/status");
+      if (!status.updatedAt) {
+        label.textContent = `${status.source}のグラフ`;
+        return;
+      }
+      label.textContent = `${status.source}のグラフ 更新 ${status.updatedAt} / ${status.quads.toLocaleString()} クワッド`;
+      if (last && last !== status.updatedAt) {
+        label.classList.add("flash");
+        setTimeout(() => label.classList.remove("flash"), 1500);
+        await renderSummary();
+      }
+      last = status.updatedAt;
+    } catch (e) { showError(e); }
+  };
+  await check();
+  setInterval(check, STATUS_POLL_MS);
 }
 
 function setupSearch() {
@@ -219,7 +246,7 @@ async function main() {
   cy.on("tap", "node", (event) => selectNode(event.target.id(), event.target.data("label")));
   document.getElementById("reset").addEventListener("click", loadOverview);
   setupSearch();
-  await Promise.all([loadOverview(), setupSummary(), setupQueries()]);
+  await Promise.all([loadOverview(), renderSummary(), setupQueries(), watchStatus()]);
 }
 
 main().catch(showError);

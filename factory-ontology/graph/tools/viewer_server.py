@@ -2,15 +2,20 @@
 
     python tools/viewer_server.py        # http://127.0.0.1:8765 をブラウザで開く
     python tools/viewer_server.py --port 9000 --no-browser
+    python tools/viewer_server.py --s3 kojima   # クラウドのグラフを読み、更新されたら読み直す
 
 ほかの Web サイトから悪用されないよう、待ち受けは 127.0.0.1 のみ、Host ヘッダーは localhost だけ、
 API には独自ヘッダー(X-Requested-By: kg-viewer)を必須にしている。グラフの更新はできない。
 """
 
 import argparse
+import gzip
 import json
 import sys
+import threading
+import time
 import webbrowser
+from datetime import timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -58,6 +63,43 @@ SELECT DISTINCT ?s ?label WHERE {
   ?s rdfs:label ?label . FILTER (STRSTARTS(STR(?s), "%(id)s") && CONTAINS(LCASE(STR(?v)), LCASE(?q)))
 } ORDER BY ?label LIMIT 20"""
 SUMMARY = "SELECT ?type ?label (COUNT(DISTINCT ?s) AS ?n) WHERE { ?s a ?type . OPTIONAL { ?type rdfs:label ?label } FILTER (STRSTARTS(STR(?s), \"%s\")) } GROUP BY ?type ?label ORDER BY DESC(?n)"
+
+
+class CloudGraph:
+    """S3 のグラフを読み、更新されていたら読み直す。"""
+
+    KEY = "kg/current.nq.gz"
+    POLL_SECONDS = 5
+
+    def __init__(self, owner, region="ap-northeast-1"):
+        import boto3
+        session = boto3.Session(region_name=region)
+        account = session.client("sts").get_caller_identity()["Account"]
+        self.bucket = f"xcp-factoryont-{owner}-raw-{account}"
+        self.s3 = session.client("s3")
+        self.etag = None
+        self.store = None
+        self.status = {"source": "クラウド"}
+        self.refresh()
+
+    def refresh(self):
+        head = self.s3.head_object(Bucket=self.bucket, Key=self.KEY)
+        if head["ETag"] == self.etag:
+            return
+        body = self.s3.get_object(Bucket=self.bucket, Key=self.KEY)["Body"].read()
+        store = open_store(data=gzip.decompress(body))
+        self.store, self.etag = store, head["ETag"]
+        modified = head["LastModified"].astimezone(timezone(timedelta(hours=9)))
+        self.status = {"source": "クラウド", "updatedAt": modified.strftime("%H:%M:%S"), "quads": len(store),
+                       "lastBatch": head["Metadata"].get("last-key", "").rsplit("/", 1)[-1]}
+
+    def poll(self):
+        while True:
+            time.sleep(self.POLL_SECONDS)
+            try:
+                self.refresh()
+            except Exception as e:  # 一時的な失敗では止めず、次回に読み直す
+                print(f"グラフの読み直しに失敗しました: {e}", file=sys.stderr)
 
 
 def local_name(iri):
@@ -157,7 +199,7 @@ def list_queries():
     return out
 
 
-def make_handler(store, port):
+def make_handler(get_store, port, get_status=lambda: {"source": "手元"}):
     class Handler(BaseHTTPRequestHandler):
         server_version = "kg-viewer"
 
@@ -199,7 +241,10 @@ def make_handler(store, port):
             if not self.guard(api=True):
                 return
             params = parse_qs(parts.query)
+            store = get_store()
             try:
+                if parts.path == "/api/status":
+                    return self.send(200, get_status())
                 if parts.path == "/api/overview":
                     return self.send(200, overview(store))
                 if parts.path == "/api/summary":
@@ -227,6 +272,7 @@ def make_handler(store, port):
             if length > MAX_BODY:
                 return self.send(413, {"error": "要求が大きすぎます"})
             body = self.rfile.read(length).decode()
+            store = get_store()
             try:
                 if self.path == "/api/sparql":
                     return self.send(200, run_json(store, body), "application/sparql-results+json")
@@ -246,9 +292,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--s3", metavar="OWNER", help="クラウドのグラフを読む(担当者名)")
     args = parser.parse_args()
-    store = open_store()
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(store, args.port))
+    if args.s3:
+        cloud = CloudGraph(args.s3)
+        threading.Thread(target=cloud.poll, daemon=True).start()
+        handler = make_handler(lambda: cloud.store, args.port, lambda: cloud.status)
+    else:
+        store = open_store()
+        handler = make_handler(lambda: store, args.port)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     url = f"http://127.0.0.1:{args.port}"
     print(f"{url} で表示しています。Ctrl+C で止めます")
     if not args.no_browser:

@@ -18,6 +18,11 @@ def stack_name(owner):
     return f"{PROJECT}-{owner}"
 
 
+def artifacts_bucket_name(owner, account):
+    """Lambda のコードを置くバケット。スタックより先に必要なのでスタックの外で作る。"""
+    return f"{stack_name(owner)}-artifacts-{account}"
+
+
 def add_common_args(parser):
     parser.add_argument("--owner", required=True, type=owner_arg, help="名前に入れる担当者名(例: kojima)")
     parser.add_argument("--region", default=DEFAULT_REGION)

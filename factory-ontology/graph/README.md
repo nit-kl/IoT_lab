@@ -6,7 +6,7 @@
 |---|---|
 | `ontology/` | 拡張語彙 `xf.ttl`、標準の語の日本語ラベル、SHACL の検証ルール `shapes.ttl` |
 | `mapping/mapping.toml` | Oracle の表からグラフへの変換定義。列の意味はここだけに書く |
-| `kg/` | 変換とグラフ読み込みの本体。ステップ 4 で Lambda からも使う |
+| `kg/` | 変換、差分の反映、グラフの読み込み。`transform.py` と `update.py` は Lambda からも使う |
 | `queries/` | 問い合わせ。1 行目のコメントが問いの題名 |
 | `tools/` | グラフの構築、検証、問い合わせ、ビューアのサーバー |
 | `tests/` | Oracle なしで動くテスト |

@@ -92,15 +92,20 @@ def current_order(cur, line, now, tick):
 
 
 def add_production(cur, now, interval, rng, tick):
+    """実績は時間ごとの行に積み上げる。更新のたびに行を増やすと、グラフが増え続けるため。"""
+    hour = now.replace(minute=0, second=0, microsecond=0)
     for line, equipment in MAIN_EQUIPMENT.items():
         order = current_order(cur, line, now, tick)
         cycle = next(v[2] for v in PRODUCTS.values() if v[1] == line)
         made = max(1, int(interval / cycle * rng.uniform(0.86, 0.96)))
         defects = int(made * rng.uniform(0.005, 0.012))
-        cur.execute("INSERT INTO T_SEISAN_JISSEKI (JISSEKI_ID, SHIJI_NO, KIKAI_CD, KAISHI_TS, SHURYO_TS, OK_SU, NG_SU, UPD_TS) "
-                    "VALUES (:1, :2, :3, :4, :5, :6, :7, :8)",
-                    [next_id(cur, "T_SEISAN_JISSEKI", "JISSEKI_ID"), order, equipment, now - timedelta(seconds=interval), now,
-                     made - defects, defects, now])
+        cur.execute("UPDATE T_SEISAN_JISSEKI SET OK_SU = OK_SU + :1, NG_SU = NG_SU + :2, SHURYO_TS = :3, UPD_TS = :4 "
+                    "WHERE SHIJI_NO = :5 AND KIKAI_CD = :6 AND KAISHI_TS = :7",
+                    [made - defects, defects, now, now, order, equipment, hour])
+        if cur.rowcount == 0:
+            cur.execute("INSERT INTO T_SEISAN_JISSEKI (JISSEKI_ID, SHIJI_NO, KIKAI_CD, KAISHI_TS, SHURYO_TS, OK_SU, NG_SU, UPD_TS) "
+                        "VALUES (:1, :2, :3, :4, :5, :6, :7, :8)",
+                        [next_id(cur, "T_SEISAN_JISSEKI", "JISSEKI_ID"), order, equipment, hour, now, made - defects, defects, now])
         tick.count("T_SEISAN_JISSEKI")
 
 

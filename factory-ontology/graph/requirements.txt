@@ -5,3 +5,4 @@ oracledb==4.0.0
 python-dotenv>=1.0
 pytest>=8
 sqlglot>=25
+boto3[crt]>=1.35

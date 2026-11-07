@@ -38,11 +38,23 @@ def count(conn, sql, *binds):
 
 def test_tick_adds_rows_and_updates_existing_ones(conn):
     now = datetime.now()
-    runs = count(conn, "SELECT COUNT(*) FROM T_SEISAN_JISSEKI")
+    sensors = count(conn, "SELECT COUNT(*) FROM T_SENSOR_DATA")
     tick = run_tick(conn, now, 60, random.Random(1))
-    assert count(conn, "SELECT COUNT(*) FROM T_SEISAN_JISSEKI") == runs + 4
-    assert tick.added["T_SENSOR_DATA"] == 12
+    assert count(conn, "SELECT COUNT(*) FROM T_SENSOR_DATA") == sensors + 12
+    assert tick.added["T_SEISAN_JISSEKI"] == 4
     assert count(conn, "SELECT COUNT(*) FROM T_TOBAN WHERE AREA_CD = 'A10' AND KAISHI_TS <= :1 AND :2 < SHURYO_TS", now, now) >= 1
+
+
+def test_production_accumulates_on_the_hourly_row(conn):
+    """何度更新しても、実績は時間ごとに 1 行のまま増えていく(グラフを増やさない)。"""
+    now = datetime.now()
+    run_tick(conn, now, 60, random.Random(1))
+    rows = count(conn, "SELECT COUNT(*) FROM T_SEISAN_JISSEKI")
+    hour = now.replace(minute=0, second=0, microsecond=0)
+    good = count(conn, "SELECT SUM(OK_SU) FROM T_SEISAN_JISSEKI WHERE KAISHI_TS = :1", hour)
+    run_tick(conn, now + timedelta(seconds=1), 60, random.Random(2))
+    assert count(conn, "SELECT COUNT(*) FROM T_SEISAN_JISSEKI") == rows
+    assert count(conn, "SELECT SUM(OK_SU) FROM T_SEISAN_JISSEKI WHERE KAISHI_TS = :1", hour) > good
 
 
 def test_power_accumulates_on_the_hourly_row(conn):

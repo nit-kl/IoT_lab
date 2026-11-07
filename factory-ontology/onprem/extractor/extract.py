@@ -86,9 +86,9 @@ def changed_rows(fetch, table, columns, entry):
     return fresh, {"watermark": latest.isoformat(), "seen": sorted(k for u, k in marks if u >= keep_from)}
 
 
-def build_batch(rows_by_table, now, batch_id):
-    """1 回分を gzip の JSON Lines にする。1 行目は内容の要約。"""
-    header = {"batch": batch_id, "created": now.isoformat(), "tables": {t: len(r) for t, r in rows_by_table.items()}}
+def build_batch(rows_by_table, now, batch_id, full=False):
+    """1 回分を gzip の JSON Lines にする。1 行目は内容の要約。full は全件の送り直しの印。"""
+    header = {"batch": batch_id, "created": now.isoformat(), "full": full, "tables": {t: len(r) for t, r in rows_by_table.items()}}
     lines = [json.dumps(header, ensure_ascii=False)]
     for table, rows in rows_by_table.items():
         lines += [json.dumps({"t": table, "r": row}, ensure_ascii=False) for row in rows]
@@ -96,7 +96,7 @@ def build_batch(rows_by_table, now, batch_id):
 
 
 def batch_key(now, batch_id):
-    return f"raw/{now:%Y/%m/%d}/{now:%Y%m%dT%H%M%S}-{batch_id}.jsonl.gz"
+    return f"raw/{now:%Y/%m/%d}/{now:%Y%m%dT%H%M%S%f}-{batch_id}.jsonl.gz"  # 順序が処理順になるのでマイクロ秒まで
 
 
 def extract_once(fetch, put, policy, state, now=None):
@@ -112,7 +112,7 @@ def extract_once(fetch, put, policy, state, now=None):
     if not rows_by_table:
         return {}, new_state
     batch_id = uuid.uuid4().hex[:8]
-    put(batch_key(now, batch_id), build_batch(rows_by_table, now, batch_id))
+    put(batch_key(now, batch_id), build_batch(rows_by_table, now, batch_id, full=not state))
     return {t: len(r) for t, r in rows_by_table.items()}, new_state
 
 

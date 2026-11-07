@@ -63,7 +63,12 @@ def has_values(template, row):
     return all(row.get(name) is not None for name in FIELD.findall(template))
 
 
+def to_datetime(value):
+    return datetime.fromisoformat(value) if isinstance(value, str) else value
+
+
 def to_date(value):
+    value = to_datetime(value)
     return value.date() if isinstance(value, datetime) else value
 
 
@@ -79,7 +84,7 @@ def literal(value, kind):
     if kind == "date":
         return Literal(to_date(value).isoformat(), datatype=NamedNode(XSD + "date"))
     if kind == "datetime":
-        return Literal(value.replace(tzinfo=JST).isoformat(), datatype=NamedNode(XSD + "dateTime"))
+        return Literal(to_datetime(value).replace(tzinfo=JST).isoformat(), datatype=NamedNode(XSD + "dateTime"))
     raise ValueError(f"未対応の kind: {kind}")
 
 
