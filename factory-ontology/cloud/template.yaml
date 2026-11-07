@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  xcp-factoryont: オンプレの抽出プログラムが差分を置く S3 と、証明書で得る短命の認証情報(IAM Roles Anywhere)。
+  オンプレに長期のアクセスキーを置かず、権限は raw/ への新規書き込みだけにする。
+
+Parameters:
+  Owner:
+    Type: String
+    AllowedPattern: "^[a-z][a-z0-9]{1,15}$"
+  CaCertificate:
+    Type: String
+    Description: 手元で作った CA の証明書(公開情報。秘密鍵は AWS に送らない)
+  ClientCommonName:
+    Type: String
+    Description: 抽出プログラムの証明書の CN。これ以外の証明書では役割を使えない
+  CaCommonName:
+    Type: String
+
+Resources:
+  RawBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-raw-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-raw
+            Status: Enabled
+            Prefix: raw/
+            ExpirationInDays: 90
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  RawBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RawBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt RawBucket.Arn
+              - !Sub "${RawBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  TrustAnchor:
+    Type: AWS::RolesAnywhere::TrustAnchor
+    Properties:
+      Name: !Ref AWS::StackName
+      Enabled: true
+      Source:
+        SourceType: CERTIFICATE_BUNDLE
+        SourceData:
+          X509CertificateData: !Ref CaCertificate
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  ExtractorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-extractor"
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rolesanywhere.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+              - sts:SetSourceIdentity
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt TrustAnchor.TrustAnchorArn
+              StringEquals:
+                aws:PrincipalTag/x509Subject/CN: !Ref ClientCommonName
+                aws:PrincipalTag/x509Issuer/CN: !Ref CaCommonName
+      Policies:
+        - PolicyName: put-raw-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${RawBucket.Arn}/raw/*"
+                Condition:
+                  "Null":
+                    s3:if-none-match: "false"
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  Profile:
+    Type: AWS::RolesAnywhere::Profile
+    Properties:
+      Name: !Ref AWS::StackName
+      Enabled: true
+      DurationSeconds: 3600
+      RoleArns:
+        - !GetAtt ExtractorRole.Arn
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+Outputs:
+  RawBucketName:
+    Value: !Ref RawBucket
+  TrustAnchorArn:
+    Value: !GetAtt TrustAnchor.TrustAnchorArn
+  ProfileArn:
+    Value: !GetAtt Profile.ProfileArn
+  ExtractorRoleArn:
+    Value: !GetAtt ExtractorRole.Arn
