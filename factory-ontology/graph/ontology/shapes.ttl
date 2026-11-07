@@ -1,0 +1,125 @@
+# SHACL: ナレッジグラフが満たすべきルール。tools/validate.py がこれで検証する。
+
+@prefix sh:     <http://www.w3.org/ns/shacl#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xf:     <https://xcp-factory.example/def#> .
+@prefix xfs:    <https://xcp-factory.example/def/shapes#> .
+@prefix org:    <http://www.w3.org/ns/org#> .
+@prefix prov:   <http://www.w3.org/ns/prov#> .
+@prefix saref:  <https://saref.etsi.org/core/> .
+@prefix s4inma: <https://saref.etsi.org/saref4inma/> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+@prefix sosa:   <http://www.w3.org/ns/sosa/> .
+@prefix ssn:    <http://www.w3.org/ns/ssn/> .
+
+# ---------- 共通部品 ----------
+
+xfs:Label a sh:PropertyShape ;
+    sh:path rdfs:label ; sh:minCount 1 ; sh:message "ラベルが必要" .
+xfs:Started a sh:PropertyShape ;
+    sh:path prov:startedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ; sh:message "開始時刻が 1 つ必要" .
+xfs:EndedOptional a sh:PropertyShape ;
+    sh:path prov:endedAtTime ; sh:maxCount 1 ; sh:datatype xsd:dateTime ; sh:message "終了時刻は 1 つまで" .
+xfs:Ended a sh:PropertyShape ;
+    sh:path prov:endedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ; sh:message "終了時刻が 1 つ必要" .
+xfs:OnEquipment a sh:PropertyShape ;
+    sh:path xf:onEquipment ; sh:minCount 1 ; sh:maxCount 1 ; sh:class s4inma:ProductionEquipment ; sh:message "対象設備が 1 つ必要" .
+xfs:ForOrder a sh:PropertyShape ;
+    sh:path xf:forOrder ; sh:minCount 1 ; sh:maxCount 1 ; sh:class xf:WorkOrder ; sh:message "製造指図が 1 つ必要" .
+xfs:OfPart a sh:PropertyShape ;
+    sh:path xf:ofPart ; sh:minCount 1 ; sh:maxCount 1 ; sh:class xf:Part ; sh:message "部品・材料が 1 つ必要" .
+xfs:UsesBatch a sh:PropertyShape ;
+    sh:path xf:usesBatch ; sh:minCount 1 ; sh:maxCount 1 ; sh:class s4inma:MaterialBatch ; sh:message "ロットが 1 つ必要" .
+
+# ---------- 組織と設備 ----------
+
+xfs:Factory a sh:NodeShape ; sh:targetClass s4inma:Factory ;
+    sh:property xfs:Label , [ sh:path saref:consistsOf ; sh:minCount 1 ; sh:class s4inma:Area ; sh:message "工場はエリアを持つ" ] .
+xfs:Area a sh:NodeShape ; sh:targetClass s4inma:Area ;
+    sh:property xfs:Label , [ sh:path saref:consistsOf ; sh:minCount 1 ; sh:class s4inma:WorkCenter ; sh:message "エリアはラインを持つ" ] .
+xfs:Line a sh:NodeShape ; sh:targetClass s4inma:WorkCenter ;
+    sh:property xfs:Label , [ sh:path saref:consistsOf ; sh:minCount 1 ; sh:class s4inma:ProductionEquipment ; sh:message "ラインは設備を持つ" ] .
+xfs:Equipment a sh:NodeShape ; sh:targetClass s4inma:ProductionEquipment ;
+    sh:property xfs:Label ,
+        [ sh:path s4inma:belongsToCategory ; sh:maxCount 1 ; sh:class s4inma:ProductionEquipmentCategory ; sh:message "型式は 1 つまで" ] ,
+        [ sh:path xf:equipmentId ; sh:maxCount 1 ; sh:message "設備コードは 1 つまで" ] ,
+        [ sh:path xf:plcId ; sh:maxCount 1 ; sh:message "PLC の ID は 1 つまで" ] ,
+        [ sh:path xf:cmmsId ; sh:maxCount 1 ; sh:message "保全システムの ID は 1 つまで" ] .
+xfs:RealEquipment a sh:NodeShape ;
+    sh:targetSubjectsOf xf:equipmentId ;
+    sh:property [ sh:path s4inma:belongsToCategory ; sh:minCount 1 ; sh:message "設備は型式を持つ" ] ,
+                [ sh:path xf:plcId ; sh:minCount 1 ; sh:message "PLC の ID が未登録" ] ,
+                [ sh:path xf:cmmsId ; sh:minCount 1 ; sh:message "保全システムの ID が未登録" ] .
+xfs:Observable a sh:NodeShape ; sh:targetClass sosa:ObservableProperty ;
+    sh:property [ sh:path ssn:isPropertyOf ; sh:minCount 1 ; sh:maxCount 1 ; sh:class s4inma:ProductionEquipment ; sh:message "計測対象の設備が必要" ] .
+
+# ---------- 部品とロット ----------
+
+xfs:Part a sh:NodeShape ; sh:targetClass xf:Part ;
+    sh:property xfs:Label , [ sh:path xf:partId ; sh:minCount 1 ; sh:maxCount 1 ; sh:message "部品コードが必要" ] .
+xfs:Batch a sh:NodeShape ; sh:targetClass s4inma:MaterialBatch ;
+    sh:property xfs:OfPart ,
+        [ sh:path xf:suppliedBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:class xf:Supplier ; sh:message "仕入先が必要" ] .
+xfs:Bom a sh:NodeShape ; sh:targetClass xf:BomLine ;
+    sh:property [ sh:path xf:parentPart ; sh:minCount 1 ; sh:maxCount 1 ; sh:class xf:Part ; sh:message "親部品が必要" ] ,
+                [ sh:path xf:childPart ; sh:minCount 1 ; sh:maxCount 1 ; sh:class xf:Part ; sh:message "子部品が必要" ] .
+xfs:Installation a sh:NodeShape ; sh:targetClass xf:PartInstallation ;
+    sh:property xfs:OnEquipment , xfs:OfPart , xfs:UsesBatch , xfs:Started , xfs:EndedOptional .
+xfs:MaterialUse a sh:NodeShape ; sh:targetClass xf:MaterialUse ;
+    sh:property xfs:ForOrder , xfs:UsesBatch .
+
+# ---------- 生産と品質 ----------
+
+xfs:WorkOrder a sh:NodeShape ; sh:targetClass xf:WorkOrder ;
+    sh:property [ sh:path xf:onLine ; sh:minCount 1 ; sh:maxCount 1 ; sh:class s4inma:WorkCenter ; sh:message "ラインが必要" ] ,
+        [ sh:path xf:producesProduct ; sh:minCount 1 ; sh:maxCount 1 ; sh:class s4inma:ItemCategory ; sh:message "製品が必要" ] ,
+        [ sh:path xf:dueDate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:date ; sh:message "納期が必要" ] ,
+        [ sh:path xf:orderState ; sh:minCount 1 ; sh:maxCount 1 ; sh:class skos:Concept ; sh:message "状態が必要" ] .
+xfs:Run a sh:NodeShape ; sh:targetClass xf:ProductionRun ;
+    sh:property xfs:ForOrder , xfs:OnEquipment , xfs:Started , xfs:Ended ,
+        [ sh:path xf:goodCount ; sh:minCount 1 ; sh:minInclusive 0 ; sh:message "良品数は 0 以上" ] ,
+        [ sh:path xf:defectCount ; sh:minCount 1 ; sh:minInclusive 0 ; sh:message "不良数は 0 以上" ] .
+xfs:Inspection a sh:NodeShape ; sh:targetClass xf:Inspection ;
+    sh:property xfs:ForOrder , xfs:Started ,
+        [ sh:path xf:inspectedCount ; sh:minCount 1 ; sh:minInclusive 0 ; sh:message "検査数が必要" ] .
+
+# ---------- 異常と保全 ----------
+
+xfs:Alarm a sh:NodeShape ; sh:targetClass xf:Alarm ;
+    sh:property xfs:OnEquipment , xfs:Started , xfs:EndedOptional ,
+        [ sh:path xf:severity ; sh:minCount 1 ; sh:maxCount 1 ; sh:minInclusive 1 ; sh:maxInclusive 3 ; sh:message "重大度は 1〜3" ] ,
+        [ sh:path xf:sourceEquipmentId ; sh:minCount 1 ; sh:message "連携元の設備 ID を残す" ] .
+xfs:Stoppage a sh:NodeShape ; sh:targetClass xf:Stoppage ;
+    sh:property xfs:OnEquipment , xfs:Started , xfs:EndedOptional ,
+        [ sh:path xf:stopReason ; sh:minCount 1 ; sh:class skos:Concept ; sh:message "停止の理由が必要" ] .
+xfs:Maintenance a sh:NodeShape ; sh:targetClass xf:MaintenanceWork ;
+    sh:property xfs:OnEquipment , xfs:Started , xfs:EndedOptional ,
+        [ sh:path prov:wasAssociatedWith ; sh:minCount 1 ; sh:class prov:Person ; sh:message "担当者が必要" ] ,
+        [ sh:path xf:forAlarm ; sh:maxCount 1 ; sh:class xf:Alarm ; sh:message "対象のアラームは 1 つまで" ] .
+
+# ---------- 人と役割 ----------
+
+xfs:Person a sh:NodeShape ; sh:targetClass prov:Person ;
+    sh:property [ sh:path xf:employeeId ; sh:minCount 1 ; sh:maxCount 1 ; sh:message "社員番号が必要" ] .
+xfs:Assignment a sh:NodeShape ; sh:targetClass xf:RoleAssignment ;
+    sh:property [ sh:path org:member ; sh:minCount 1 ; sh:maxCount 1 ; sh:class prov:Person ; sh:message "担当者が必要" ] ,
+        [ sh:path org:role ; sh:minCount 1 ; sh:maxCount 1 ; sh:class org:Role ; sh:message "役割が必要" ] ,
+        [ sh:path xf:scope ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:message "担当範囲が必要" ;
+          sh:or ( [ sh:class s4inma:Factory ] [ sh:class s4inma:Area ] [ sh:class s4inma:WorkCenter ] ) ] ,
+        [ sh:path xf:validFrom ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:date ; sh:message "開始日が必要" ] .
+xfs:Duty a sh:NodeShape ; sh:targetClass xf:DutyShift ;
+    sh:property xfs:Started , xfs:Ended ,
+        [ sh:path prov:wasAssociatedWith ; sh:minCount 1 ; sh:maxCount 1 ; sh:class prov:Person ; sh:message "当番の担当者が必要" ] ,
+        [ sh:path xf:inArea ; sh:minCount 1 ; sh:maxCount 1 ; sh:class s4inma:Area ; sh:message "エリアが必要" ] ,
+        [ sh:path org:role ; sh:minCount 1 ; sh:class org:Role ; sh:message "役割が必要" ] .
+xfs:Target a sh:NodeShape ; sh:targetClass xf:KpiTarget ;
+    sh:property [ sh:path xf:onLine ; sh:minCount 1 ; sh:class s4inma:WorkCenter ; sh:message "ラインが必要" ] ,
+        [ sh:path xf:kpi ; sh:minCount 1 ; sh:class skos:Concept ; sh:message "KPI の種類が必要" ] ,
+        [ sh:path xf:targetValue ; sh:minCount 1 ; sh:message "目標値が必要" ] .
+
+# ---------- データの問題 ----------
+
+xfs:Issue a sh:NodeShape ; sh:targetClass xf:DataIssue ;
+    sh:property [ sh:path xf:issueType ; sh:minCount 1 ; sh:message "問題の種類が必要" ] ,
+                [ sh:path xf:sourceTable ; sh:minCount 1 ; sh:message "連携元の表が必要" ] .

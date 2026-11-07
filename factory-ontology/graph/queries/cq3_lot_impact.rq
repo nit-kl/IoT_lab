@@ -1,0 +1,18 @@
+# 問い3: 不良ロットの影響を受けた製造指図と製品はどれか
+SELECT ?order ?line ?product ?due ?inspected ?defects ?defectType WHERE {
+  ?batch xf:lotNumber "{{LOT}}" .
+  ?use a xf:MaterialUse ;
+      xf:usesBatch ?batch ;
+      xf:forOrder ?o .
+  ?o xf:orderNumber ?order ;
+      xf:dueDate ?due ;
+      xf:onLine / rdfs:label ?line ;
+      xf:producesProduct / rdfs:label ?product .
+  OPTIONAL {
+    ?inspection xf:forOrder ?o ;
+        xf:inspectedCount ?inspected .
+    OPTIONAL { ?inspection xf:defectCount ?defects }
+    OPTIONAL { ?inspection xf:defectType / rdfs:label ?defectType }
+  }
+}
+ORDER BY ?order
