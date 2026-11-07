@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 FACTORY = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(FACTORY), str(FACTORY / "graph"), str(FACTORY / "onprem" / "simulator"), str(FACTORY / "onprem" / "extractor"), str(FACTORY / "cloud" / "lambda")]
+sys.path[:0] = [str(FACTORY), str(FACTORY / "graph"), str(FACTORY / "onprem" / "simulator"), str(FACTORY / "onprem" / "extractor"), str(FACTORY / "cloud"), str(FACTORY / "cloud" / "lambda")]
 os.environ.setdefault("AWS_DEFAULT_REGION", "ap-northeast-1")
 
 import ack  # noqa: E402
@@ -18,7 +18,7 @@ from generate import generate  # noqa: E402
 from kg.update import apply_tables, load_store  # noqa: E402
 from notify import digest  # noqa: E402
 from notify.mailer import build, sign, subject_line, verify  # noqa: E402
-from notify.rules import compact, detect, route  # noqa: E402
+from notify.rules import ROLES, compact, detect, route  # noqa: E402
 from notify.writer import NOTE, Report, ScriptedWriter  # noqa: E402
 
 JST = timezone(timedelta(hours=9))
@@ -312,6 +312,15 @@ def test_role_specific_address_is_used(store, outbox):
     inject_alarm(store)
     custom.handle_events(store, NOW)
     assert outbox.role("工場長")[0][0] == "boss@example.com" and outbox.role("保全当番")[0][0] == "a@example.com"
+
+
+def test_recipient_options_cover_every_role():
+    from naming import ROLES as OPTION_ROLES, recipients_map
+    assert set(OPTION_ROLES) == set(ROLES) | {"管理者"}
+    assert recipients_map("a@example.com", ["工場長=b@example.com"]) == {"default": "a@example.com", "工場長": "b@example.com"}
+    for bad in ("工場長", "社長=b@example.com", "工場長=nobody"):
+        with pytest.raises(ValueError):
+            recipients_map("a@example.com", [bad])
 
 
 # ---------- 上位通知 ----------

@@ -364,9 +364,10 @@ Resources:
                   - dynamodb:DeleteItem
                   - dynamodb:Scan
                 Resource: !GetAtt NotifyTable.Arn
+              # SES のサンドボックスでは宛先のアドレスにも権限が要るので、対象は全アドレスにして、送信元を条件で絞る
               - Effect: Allow
                 Action: ses:SendEmail
-                Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${NotifyAddress}"
+                Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
                 Condition:
                   StringEquals:
                     ses:FromAddress: !Ref NotifyAddress

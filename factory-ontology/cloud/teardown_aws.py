@@ -2,6 +2,9 @@
 
     python cloud/teardown_aws.py --owner kojima
     python cloud/teardown_aws.py --owner kojima --check     # 削除せず確認だけ
+    python cloud/teardown_aws.py --owner kojima --ses-identity you@example.com   # SES の検証済みアドレスも消す
+
+SES のアドレスはスタックの外にあるので、指定しなければ残す。残しておくと、作り直すときに検証の手間が要らない。
 """
 
 import argparse
@@ -74,6 +77,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_common_args(parser)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--ses-identity", action="append", default=[], help="削除する SES のアドレス(複数指定可)")
     args = parser.parse_args()
     session = boto3.Session(region_name=args.region)
     account = session.client("sts").get_caller_identity()["Account"]
@@ -96,7 +100,19 @@ def main():
         if bucket_exists(s3, artifacts):
             empty_bucket(s3, artifacts)
             s3.delete_bucket(Bucket=artifacts)
+        for identity in args.ses_identity:
+            try:
+                session.client("sesv2").delete_email_identity(EmailIdentity=identity)
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "NotFoundException":
+                    raise
     found = leftovers(session, name, account, args.owner)
+    for identity in args.ses_identity:
+        try:
+            session.client("sesv2").get_email_identity(EmailIdentity=identity)
+            found.append(("SES のアドレス", identity))
+        except ClientError:
+            pass
     for kind, item in found:
         print(f"残っています: {kind} {item}")
     print("残存なし" if not found else f"{len(found)} 件残っています")

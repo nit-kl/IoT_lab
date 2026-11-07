@@ -2,6 +2,7 @@
 
     python cloud/setup_aws.py --owner kojima --notify-address you@example.com
     python cloud/setup_aws.py --owner kojima --notify-address you@example.com --schedule   # 定時レポートも動かす
+    python cloud/setup_aws.py --owner kojima --notify-address you@example.com --recipient 工場長=boss@example.com   # 役割ごとの宛先
 
 何度実行しても同じ結果になる。証明書は 30 日を切っていたら作り直す。
 作るファイル: cloud/.secrets(CA の秘密鍵)、onprem/.secrets(抽出プログラムの証明書、秘密鍵、AWS の設定)。どちらも Git に入らない。
@@ -24,7 +25,7 @@ from botocore.exceptions import ClientError, WaiterError
 from cryptography import x509
 
 from certs import create_ca, create_client
-from naming import add_common_args, artifacts_bucket_name, stack_name
+from naming import add_common_args, artifacts_bucket_name, recipients_map, stack_name
 
 HERE = Path(__file__).resolve().parent
 ONPREM = HERE.parent / "onprem"
@@ -199,9 +200,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_common_args(parser)
     parser.add_argument("--notify-address", required=True, help="通知の送信元と既定の宛先(SES で検証済みのアドレス)")
+    parser.add_argument("--recipient", action="append", metavar="役割=アドレス", help="役割ごとの宛先(複数指定可)")
     parser.add_argument("--schedule", action="store_true", help="定時レポートを自動で動かす")
     parser.add_argument("--escalate-minutes", default="5,10", help="未対応のとき上位へ通知するまでの分数")
     args = parser.parse_args()
+    try:
+        recipients = recipients_map(args.notify_address, args.recipient)
+    except ValueError as e:
+        parser.error(str(e))
     name = stack_name(args.owner)
     ca_name, client_name = f"{name}-ca", f"{name}-extractor"
     ca_key, ca_cert = ensure_ca(ca_name)
@@ -213,7 +219,7 @@ def main():
     cfn = session.client("cloudformation")
     deploy(cfn, name, {"Owner": args.owner, "CaCertificate": ca_cert.decode(), "ClientCommonName": client_name, "CaCommonName": ca_name,
                        "CodeBucket": code_bucket, "CodeKey": code_key, "NotifyAddress": args.notify_address,
-                       "Recipients": json.dumps({"default": args.notify_address}), "AckSecretParam": ensure_ack_secret(session, name),
+                       "Recipients": json.dumps(recipients), "AckSecretParam": ensure_ack_secret(session, name),
                        "ScheduleState": "ENABLED" if args.schedule else "DISABLED", "EscalateMinutes": args.escalate_minutes})
     stack = cfn.describe_stacks(StackName=name)["Stacks"][0]
     outputs = {o["OutputKey"]: o["OutputValue"] for o in stack["Outputs"]}
