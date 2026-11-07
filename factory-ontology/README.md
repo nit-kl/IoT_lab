@@ -10,17 +10,18 @@
 | フォルダ | 内容 |
 |---|---|
 | `onprem/db/` | Oracle の表定義 |
-| `onprem/simulator/` | 模擬データの生成と投入、動いている工場の再現 |
+| `onprem/simulator/` | 模擬データの生成と投入、動いている工場の再現、デモのトラブルの発生 |
 | `onprem/extractor/` | Oracle の差分を S3 へ送る抽出プログラムと、許可リスト |
 | `onprem/tests/` | テスト(Oracle に接続できないときは、接続が必要なものだけ飛ばす) |
-| `cloud/` | AWS の環境の作成と撤去、グラフ更新の Lambda |
+| `notify/` | 検知、宛先の決定、台本モック、メールの組み立て |
+| `cloud/` | AWS の環境の作成と撤去、Lambda |
 | `graph/` | ナレッジグラフの語彙、変換定義、問い合わせ、ツール([説明](graph/README.md)) |
 | `viewer/` | 手元で動くグラフの画面 |
 
-テストの実行(`onprem`、`graph` の各フォルダで):
+テストの実行(`onprem`、`graph` の各フォルダで。通知のテストは `factory-ontology` フォルダで `graph\.venv\Scripts\python -m pytest notify\tests`):
 
 ```powershell
 .venv\Scripts\python -m pytest tests
 ```
 
-現在の状況:ステップ 4(グラフの自動更新)まで完了しました。次はステップ 5(検知、宛先の特定、通知)です。
+現在の状況:ステップ 5(検知、宛先の特定、通知)まで完了しました。次はステップ 6(異常系の確認、費用の測定、撤去の確認)です。デモの進め方は手順書の「デモの進め方」を参照してください。

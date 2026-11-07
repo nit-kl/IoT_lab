@@ -32,7 +32,7 @@ def bucket_exists(s3, bucket):
 
 
 def leftovers(session, name, account, owner):
-    cfn, s3, iam, ra, lam, logs = (session.client(s) for s in ("cloudformation", "s3", "iam", "rolesanywhere", "lambda", "logs"))
+    cfn, s3, iam, ra, lam, logs, ssm, ddb = (session.client(s) for s in ("cloudformation", "s3", "iam", "rolesanywhere", "lambda", "logs", "ssm", "dynamodb"))
     found = []
     try:
         cfn.describe_stacks(StackName=name)
@@ -42,15 +42,26 @@ def leftovers(session, name, account, owner):
     for bucket in (f"{name}-raw-{account}", artifacts_bucket_name(owner, account)):
         if bucket_exists(s3, bucket):
             found.append(("S3 バケット", bucket))
-    for role in (f"{name}-extractor", f"{name}-updater"):
+    for role in (f"{name}-extractor", f"{name}-updater", f"{name}-notifier", f"{name}-ack"):
         try:
             iam.get_role(RoleName=role)
             found.append(("IAM ロール", role))
         except ClientError:
             pass
+    for function in ("updater", "notifier", "ack"):
+        try:
+            lam.get_function(FunctionName=f"{name}-{function}")
+            found.append(("Lambda", f"{name}-{function}"))
+        except ClientError:
+            pass
     try:
-        lam.get_function(FunctionName=f"{name}-updater")
-        found.append(("Lambda", f"{name}-updater"))
+        ddb.describe_table(TableName=f"{name}-notify")
+        found.append(("DynamoDB", f"{name}-notify"))
+    except ClientError:
+        pass
+    try:
+        ssm.get_parameter(Name=f"/{name}/ack-secret")
+        found.append(("Parameter Store", f"/{name}/ack-secret"))
     except ClientError:
         pass
     found += [("ロググループ", g["logGroupName"]) for g in logs.describe_log_groups(logGroupNamePrefix=f"/aws/lambda/{name}-")["logGroups"]]
@@ -77,6 +88,10 @@ def main():
             cfn.get_waiter("stack_delete_complete").wait(StackName=name, WaiterConfig={"Delay": 5, "MaxAttempts": 120})
         except WaiterError as e:
             sys.exit(f"スタックの削除に失敗しました: {e}")
+        try:
+            session.client("ssm").delete_parameter(Name=f"/{name}/ack-secret")
+        except ClientError:
+            pass
         artifacts = artifacts_bucket_name(args.owner, account)
         if bucket_exists(s3, artifacts):
             empty_bucket(s3, artifacts)

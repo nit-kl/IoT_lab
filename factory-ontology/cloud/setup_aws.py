@@ -1,6 +1,7 @@
 """AWS の環境(S3、IAM Roles Anywhere)を作成・更新し、オンプレ側の認証設定を書き出す。
 
-    python cloud/setup_aws.py --owner kojima
+    python cloud/setup_aws.py --owner kojima --notify-address you@example.com
+    python cloud/setup_aws.py --owner kojima --notify-address you@example.com --schedule   # 定時レポートも動かす
 
 何度実行しても同じ結果になる。証明書は 30 日を切っていたら作り直す。
 作るファイル: cloud/.secrets(CA の秘密鍵)、onprem/.secrets(抽出プログラムの証明書、秘密鍵、AWS の設定)。どちらも Git に入らない。
@@ -10,6 +11,7 @@ import argparse
 import hashlib
 import io
 import json
+import secrets
 import subprocess
 import sys
 import urllib.request
@@ -31,11 +33,16 @@ WHEEL_DIR = HERE / ".cache" / "wheels"
 PYOXIGRAPH = "0.5.13"  # graph/requirements.txt と同じ版
 LAMBDA_FILES = {  # zip の中の名前 → 元のファイル
     "updater.py": HERE / "lambda" / "updater.py",
+    "notifier.py": HERE / "lambda" / "notifier.py",
+    "ack.py": HERE / "lambda" / "ack.py",
     "kg/__init__.py": GRAPH / "kg" / "__init__.py",
     "kg/common.py": GRAPH / "kg" / "common.py",
+    "kg/store.py": GRAPH / "kg" / "store.py",
     "kg/transform.py": GRAPH / "kg" / "transform.py",
     "kg/update.py": GRAPH / "kg" / "update.py",
     "mapping/mapping.toml": GRAPH / "mapping" / "mapping.toml",
+    **{f"queries/{p.name}": p for p in (GRAPH / "queries").glob("*.rq")},
+    **{f"notify/{p.name}": p for p in (HERE.parent / "notify").iterdir() if p.is_file() and p.suffix in (".py", ".toml")},
 }
 TEMPLATE = HERE / "template.yaml"
 CA_DIR = HERE / ".secrets"
@@ -136,6 +143,19 @@ def upload_code(session, owner, account, region):
     return bucket, key
 
 
+def ensure_ack_secret(session, name):
+    """対応済みリンクの署名の鍵を作る。あれば作り直さない(送信済みのリンクが無効になるため)。"""
+    ssm = session.client("ssm")
+    parameter = f"/{name}/ack-secret"
+    try:
+        ssm.get_parameter(Name=parameter)
+    except ClientError:
+        ssm.put_parameter(Name=parameter, Type="SecureString", Value=secrets.token_urlsafe(48),
+                          Tags=[{"Key": "Project", "Value": "xcp-factoryont"}])
+        print("署名の鍵を作成しました")
+    return parameter
+
+
 def deploy(cfn, name, parameters):
     args = {"StackName": name, "TemplateBody": TEMPLATE.read_text(encoding="utf-8"), "Capabilities": ["CAPABILITY_NAMED_IAM"],
             "Parameters": [{"ParameterKey": k, "ParameterValue": v} for k, v in parameters.items()],
@@ -178,6 +198,9 @@ def write_client_config(outputs, key, cert, region):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_common_args(parser)
+    parser.add_argument("--notify-address", required=True, help="通知の送信元と既定の宛先(SES で検証済みのアドレス)")
+    parser.add_argument("--schedule", action="store_true", help="定時レポートを自動で動かす")
+    parser.add_argument("--escalate-minutes", default="5,10", help="未対応のとき上位へ通知するまでの分数")
     args = parser.parse_args()
     name = stack_name(args.owner)
     ca_name, client_name = f"{name}-ca", f"{name}-extractor"
@@ -189,7 +212,9 @@ def main():
     code_bucket, code_key = upload_code(session, args.owner, account, args.region)
     cfn = session.client("cloudformation")
     deploy(cfn, name, {"Owner": args.owner, "CaCertificate": ca_cert.decode(), "ClientCommonName": client_name, "CaCommonName": ca_name,
-                       "CodeBucket": code_bucket, "CodeKey": code_key})
+                       "CodeBucket": code_bucket, "CodeKey": code_key, "NotifyAddress": args.notify_address,
+                       "Recipients": json.dumps({"default": args.notify_address}), "AckSecretParam": ensure_ack_secret(session, name),
+                       "ScheduleState": "ENABLED" if args.schedule else "DISABLED", "EscalateMinutes": args.escalate_minutes})
     stack = cfn.describe_stacks(StackName=name)["Stacks"][0]
     outputs = {o["OutputKey"]: o["OutputValue"] for o in stack["Outputs"]}
     write_client_config(outputs, key, cert, args.region)
