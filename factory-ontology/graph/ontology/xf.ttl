@@ -1,0 +1,127 @@
+# xf: 工場ナレッジグラフの拡張語彙。標準語彙にないものだけを定義し、rdfs:subClassOf などで標準に紐づける。
+# 語彙の使い分けは graph/README.md を参照。IRI は仮ドメイン。
+
+@prefix xf:     <https://xcp-factory.example/def#> .
+@prefix owl:    <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix org:    <http://www.w3.org/ns/org#> .
+@prefix prov:   <http://www.w3.org/ns/prov#> .
+@prefix s4inma: <https://saref.etsi.org/saref4inma/> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+
+<https://xcp-factory.example/def#>
+    a owl:Ontology ;
+    rdfs:label "工場ナレッジグラフ 拡張語彙"@ja ;
+    owl:versionInfo "0.2" .
+
+# ---------- クラス:出来事(すべて prov:Activity。時刻は prov:startedAtTime / prov:endedAtTime) ----------
+
+xf:WorkOrder a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "製造指図"@ja ; rdfs:comment "ラインへの生産の指示。"@ja .
+xf:ProductionRun a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "生産実績"@ja ; rdfs:comment "ある設備での一定時間の生産の記録。"@ja .
+xf:Inspection a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "品質検査"@ja .
+xf:Alarm a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "アラーム"@ja ; rdfs:comment "発生から復帰までを 1 つの出来事として表す。"@ja .
+xf:Stoppage a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "設備停止"@ja .
+xf:MaintenanceWork a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "保全作業"@ja .
+xf:PartInstallation a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "部品の取付"@ja ;
+    rdfs:comment "取付から取外しまでの期間を持つ関係を 1 つのノードにしたもの。prov:endedAtTime がなければ現在も取付中。"@ja .
+xf:DutyShift a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "当番"@ja ; rdfs:comment "ある時間帯に、あるエリアを担当する人。"@ja .
+
+# ---------- クラス:その他 ----------
+
+xf:RoleAssignment a owl:Class ; rdfs:subClassOf org:Membership ;
+    rdfs:label "担当の割り当て"@ja ;
+    rdfs:comment "人が、ある範囲(工場・エリア・ライン)で役割を持つ期間。xf:validUntil がなければ現在も有効。"@ja .
+xf:BomLine a owl:Class ;
+    rdfs:label "部品構成"@ja ; rdfs:comment "親部品が子部品をいくつ使うかを表す。"@ja .
+xf:MaterialUse a owl:Class ;
+    rdfs:label "ロットの使用"@ja ; rdfs:comment "製造指図がどのロットをどれだけ使ったかを表す。"@ja .
+xf:KpiTarget a owl:Class ;
+    rdfs:label "KPI 目標"@ja .
+xf:DataIssue a owl:Class ;
+    rdfs:label "データの問題"@ja ;
+    rdfs:comment "変換時に見つかった問題の記録。必須の参照先がない行は本体を作らず、これだけを残す(隔離)。"@ja .
+xf:Part a owl:Class ; rdfs:subClassOf s4inma:MaterialCategory ;
+    rdfs:label "部品・材料"@ja .
+xf:Supplier a owl:Class ; rdfs:subClassOf org:Organization ;
+    rdfs:label "仕入先"@ja .
+
+# ---------- 識別子 ----------
+
+xf:equipmentId a owl:DatatypeProperty ; rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "設備コード"@ja ; rdfs:range xsd:string .
+xf:plcId a owl:DatatypeProperty ; rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "PLC 側の設備 ID"@ja ; rdfs:range xsd:string .
+xf:cmmsId a owl:DatatypeProperty ; rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "保全システム側の設備 ID"@ja ; rdfs:range xsd:string .
+xf:employeeId a owl:DatatypeProperty ; rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "社員番号"@ja ; rdfs:range xsd:string .
+xf:partId a owl:DatatypeProperty ; rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "部品コード"@ja ; rdfs:range xsd:string .
+xf:lotNumber a owl:DatatypeProperty ; rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "ロット番号"@ja ; rdfs:range xsd:string .
+xf:orderNumber a owl:DatatypeProperty ; rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "指図番号"@ja ; rdfs:range xsd:string .
+xf:sourceEquipmentId a owl:DatatypeProperty ;
+    rdfs:label "連携元の設備 ID"@ja ; rdfs:comment "連携元システムの値をそのまま残したもの。"@ja ; rdfs:range xsd:string .
+xf:sourceId a owl:DatatypeProperty ; rdfs:subPropertyOf dcterms:identifier ;
+    rdfs:label "連携元の行 ID"@ja ; rdfs:range xsd:string .
+
+# ---------- 関係 ----------
+
+xf:onEquipment a owl:ObjectProperty ; rdfs:label "対象設備"@ja ; rdfs:range s4inma:ProductionEquipment .
+xf:onLine a owl:ObjectProperty ; rdfs:label "対象ライン"@ja ; rdfs:range s4inma:WorkCenter .
+xf:inArea a owl:ObjectProperty ; rdfs:label "対象エリア"@ja ; rdfs:range s4inma:Area .
+xf:forOrder a owl:ObjectProperty ; rdfs:label "対象の製造指図"@ja ; rdfs:range xf:WorkOrder .
+xf:forAlarm a owl:ObjectProperty ; rdfs:label "対象のアラーム"@ja ; rdfs:range xf:Alarm .
+xf:ofPart a owl:ObjectProperty ; rdfs:label "部品・材料の種類"@ja ; rdfs:range xf:Part .
+xf:usesBatch a owl:ObjectProperty ; rdfs:label "使用ロット"@ja ; rdfs:range s4inma:MaterialBatch .
+xf:suppliedBy a owl:ObjectProperty ; rdfs:label "仕入先"@ja ; rdfs:range xf:Supplier .
+xf:parentPart a owl:ObjectProperty ; rdfs:label "親部品"@ja ; rdfs:range xf:Part .
+xf:childPart a owl:ObjectProperty ; rdfs:label "子部品"@ja ; rdfs:range xf:Part .
+xf:producesProduct a owl:ObjectProperty ; rdfs:label "生産する製品"@ja ; rdfs:range s4inma:ItemCategory .
+xf:scope a owl:ObjectProperty ; rdfs:label "担当範囲"@ja ; rdfs:comment "工場・エリア・ラインのいずれか。"@ja .
+xf:kpi a owl:ObjectProperty ; rdfs:label "KPI の種類"@ja ; rdfs:range skos:Concept .
+xf:alarmCode a owl:ObjectProperty ; rdfs:label "アラームの種類"@ja ; rdfs:range skos:Concept .
+xf:stopReason a owl:ObjectProperty ; rdfs:label "停止の理由"@ja ; rdfs:range skos:Concept .
+xf:defectType a owl:ObjectProperty ; rdfs:label "不良の種類"@ja ; rdfs:range skos:Concept .
+xf:orderState a owl:ObjectProperty ; rdfs:label "指図の状態"@ja ; rdfs:range skos:Concept .
+
+# ---------- 値 ----------
+
+xf:maker a owl:DatatypeProperty ; rdfs:label "メーカー"@ja ; rdfs:range xsd:string .
+xf:equipmentKind a owl:DatatypeProperty ; rdfs:label "機器区分"@ja ; rdfs:range xsd:string .
+xf:installedOn a owl:DatatypeProperty ; rdfs:label "設置日"@ja ; rdfs:range xsd:date .
+xf:partKind a owl:DatatypeProperty ; rdfs:label "部品区分"@ja ; rdfs:range xsd:string .
+xf:unitName a owl:DatatypeProperty ; rdfs:label "単位"@ja ; rdfs:range xsd:string .
+xf:quantity a owl:DatatypeProperty ; rdfs:label "数量"@ja ; rdfs:range xsd:decimal .
+xf:receivedOn a owl:DatatypeProperty ; rdfs:label "受入日"@ja ; rdfs:range xsd:date .
+xf:standardCycleSeconds a owl:DatatypeProperty ; rdfs:label "標準サイクルタイム(秒)"@ja ; rdfs:range xsd:decimal .
+xf:department a owl:DatatypeProperty ; rdfs:label "所属"@ja ; rdfs:range xsd:string .
+xf:validFrom a owl:DatatypeProperty ; rdfs:label "開始日"@ja ; rdfs:range xsd:date .
+xf:validUntil a owl:DatatypeProperty ; rdfs:label "終了日"@ja ; rdfs:range xsd:date .
+xf:targetValue a owl:DatatypeProperty ; rdfs:label "目標値"@ja ; rdfs:range xsd:decimal .
+xf:plannedQuantity a owl:DatatypeProperty ; rdfs:label "指示数量"@ja ; rdfs:range xsd:integer .
+xf:plannedStart a owl:DatatypeProperty ; rdfs:label "開始予定"@ja ; rdfs:range xsd:dateTime .
+xf:dueDate a owl:DatatypeProperty ; rdfs:label "納期"@ja ; rdfs:range xsd:date .
+xf:goodCount a owl:DatatypeProperty ; rdfs:label "良品数"@ja ; rdfs:range xsd:integer .
+xf:defectCount a owl:DatatypeProperty ; rdfs:label "不良数"@ja ; rdfs:range xsd:integer .
+xf:inspectedCount a owl:DatatypeProperty ; rdfs:label "検査数"@ja ; rdfs:range xsd:integer .
+xf:severity a owl:DatatypeProperty ; rdfs:label "重大度"@ja ; rdfs:comment "1 が軽微、3 が重大。"@ja ; rdfs:range xsd:integer .
+xf:rawCode a owl:DatatypeProperty ; rdfs:label "連携元のコード"@ja ; rdfs:range xsd:string .
+xf:message a owl:DatatypeProperty ; rdfs:label "メッセージ"@ja ; rdfs:range xsd:string .
+xf:memo a owl:DatatypeProperty ; rdfs:label "処置メモ"@ja ; rdfs:range xsd:string .
+xf:issueType a owl:DatatypeProperty ; rdfs:label "問題の種類"@ja ; rdfs:range xsd:string .
+xf:sourceTable a owl:DatatypeProperty ; rdfs:label "連携元の表"@ja ; rdfs:range xsd:string .
+xf:sourceColumn a owl:DatatypeProperty ; rdfs:label "連携元の列"@ja ; rdfs:range xsd:string .
+xf:sourceValue a owl:DatatypeProperty ; rdfs:label "連携元の値"@ja ; rdfs:range xsd:string .
+xf:quarantined a owl:DatatypeProperty ; rdfs:label "隔離"@ja ; rdfs:comment "true なら本体の行をグラフに入れていない。"@ja ; rdfs:range xsd:boolean .

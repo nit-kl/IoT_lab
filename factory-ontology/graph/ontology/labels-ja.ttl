@@ -1,0 +1,34 @@
+# 使っている標準の語の日本語ラベル(表示用)。
+
+@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix org:    <http://www.w3.org/ns/org#> .
+@prefix prov:   <http://www.w3.org/ns/prov#> .
+@prefix s4inma: <https://saref.etsi.org/saref4inma/> .
+@prefix saref:  <https://saref.etsi.org/core/> .
+@prefix skos:   <http://www.w3.org/2004/02/skos/core#> .
+@prefix sosa:   <http://www.w3.org/ns/sosa/> .
+@prefix ssn:    <http://www.w3.org/ns/ssn/> .
+
+rdfs:label rdfs:label "名称"@ja .
+s4inma:Factory rdfs:label "工場"@ja .
+s4inma:Area rdfs:label "エリア"@ja .
+s4inma:WorkCenter rdfs:label "ライン"@ja .
+s4inma:ProductionEquipment rdfs:label "設備"@ja .
+s4inma:ProductionEquipmentCategory rdfs:label "設備型式"@ja .
+s4inma:MaterialBatch rdfs:label "ロット"@ja .
+s4inma:ItemCategory rdfs:label "製品"@ja .
+s4inma:belongsToCategory rdfs:label "型式"@ja .
+saref:consistsOf rdfs:label "構成"@ja .
+sosa:ObservableProperty rdfs:label "計測項目"@ja .
+ssn:isPropertyOf rdfs:label "計測対象"@ja .
+org:Role rdfs:label "役割"@ja .
+org:member rdfs:label "担当者"@ja .
+org:role rdfs:label "役割"@ja .
+prov:Person rdfs:label "社員"@ja .
+prov:startedAtTime rdfs:label "開始"@ja .
+prov:endedAtTime rdfs:label "終了"@ja .
+prov:wasAssociatedWith rdfs:label "担当者"@ja .
+skos:Concept rdfs:label "コード"@ja .
+skos:ConceptScheme rdfs:label "コード表"@ja .
+skos:inScheme rdfs:label "コード表"@ja .
+skos:notation rdfs:label "コード値"@ja .

@@ -1,0 +1,618 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  xcp-factoryont: オンプレの抽出プログラムが差分を置く S3 と、証明書で得る短命の認証情報(IAM Roles Anywhere)。
+  オンプレに長期のアクセスキーを置かず、権限は raw/ への新規書き込みだけにする。
+
+Parameters:
+  Owner:
+    Type: String
+    AllowedPattern: "^[a-z][a-z0-9]{1,15}$"
+  CaCertificate:
+    Type: String
+    Description: 手元で作った CA の証明書(公開情報。秘密鍵は AWS に送らない)
+  ClientCommonName:
+    Type: String
+    Description: 抽出プログラムの証明書の CN。これ以外の証明書では役割を使えない
+  CaCommonName:
+    Type: String
+  CodeBucket:
+    Type: String
+    Description: Lambda のコードを置くバケット(setup_aws.py が作る)
+  CodeKey:
+    Type: String
+  NotifyAddress:
+    Type: String
+    Description: 通知の送信元で、既定の宛先(SES で検証済みのアドレス)
+  Recipients:
+    Type: String
+    Description: 役割ごとの宛先の JSON。default が既定
+  AckSecretParam:
+    Type: String
+    Description: 対応済みリンクの署名の鍵を置く Parameter Store の名前(setup_aws.py が作る)
+  ScheduleState:
+    Type: String
+    Default: DISABLED
+    AllowedValues: [ENABLED, DISABLED]
+    Description: 定時レポートの自動実行。デモでは手動で送れるので既定は止める
+  EscalateMinutes:
+    Type: String
+    Default: "5,10"
+
+Resources:
+  RawBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-raw-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-raw
+            Status: Enabled
+            Prefix: raw/
+            ExpirationInDays: 90
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+          - Id: keep-few-graph-versions
+            Status: Enabled
+            Prefix: kg/
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+              NewerNoncurrentVersions: 3
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  RawBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RawBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt RawBucket.Arn
+              - !Sub "${RawBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  TrustAnchor:
+    Type: AWS::RolesAnywhere::TrustAnchor
+    Properties:
+      Name: !Ref AWS::StackName
+      Enabled: true
+      Source:
+        SourceType: CERTIFICATE_BUNDLE
+        SourceData:
+          X509CertificateData: !Ref CaCertificate
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  ExtractorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-extractor"
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rolesanywhere.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+              - sts:SetSourceIdentity
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt TrustAnchor.TrustAnchorArn
+              StringEquals:
+                aws:PrincipalTag/x509Subject/CN: !Ref ClientCommonName
+                aws:PrincipalTag/x509Issuer/CN: !Ref CaCommonName
+      Policies:
+        - PolicyName: put-raw-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${RawBucket.Arn}/raw/*"
+                Condition:
+                  "Null":
+                    s3:if-none-match: "false"
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  Profile:
+    Type: AWS::RolesAnywhere::Profile
+    Properties:
+      Name: !Ref AWS::StackName
+      Enabled: true
+      DurationSeconds: 3600
+      RoleArns:
+        - !GetAtt ExtractorRole.Arn
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  # S3 の通知は FIFO キューへ直接送れないので EventBridge を挟む。メッセージは新着の合図で、処理順は Lambda が決める
+  UpdateDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-update-dlq.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      MessageRetentionPeriod: 1209600
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  UpdateQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-update.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      VisibilityTimeout: 720
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt UpdateDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  NewBatchRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-new-batch"
+      EventPattern:
+        source: [aws.s3]
+        detail-type: [Object Created]
+        detail:
+          bucket:
+            name: [!Ref RawBucket]
+          object:
+            key: [{ prefix: raw/ }]
+      Targets:
+        - Id: update-queue
+          Arn: !GetAtt UpdateQueue.Arn
+          SqsParameters:
+            MessageGroupId: graph
+
+  UpdateQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref UpdateQueue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt UpdateQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt NewBatchRule.Arn
+
+  UpdaterLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-updater"
+      RetentionInDays: 7
+
+  UpdaterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-updater"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: update-graph
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub "${RawBucket.Arn}/raw/*"
+                  - !Sub "${RawBucket.Arn}/kg/*"
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${RawBucket.Arn}/kg/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt RawBucket.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt UpdateQueue.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt UpdaterLogGroup.Arn
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  UpdaterFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: UpdaterLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-updater"
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: updater.handler
+      MemorySize: 1024
+      Timeout: 120
+      Role: !GetAtt UpdaterRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      Environment:
+        Variables:
+          BUCKET: !Ref RawBucket
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  UpdaterTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt UpdateQueue.Arn
+      FunctionName: !Ref UpdaterFunction
+      BatchSize: 10
+
+  # ---------- 通知 ----------
+
+  NotifyTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub "${AWS::StackName}-notify"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+      TimeToLiveSpecification:
+        AttributeName: expires
+        Enabled: true
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  NotifierLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-notifier"
+      RetentionInDays: 7
+
+  AckLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-ack"
+      RetentionInDays: 7
+
+  NotifierRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-notifier"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: notify
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "${RawBucket.Arn}/kg/current.nq.gz"
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Scan
+                Resource: !GetAtt NotifyTable.Arn
+              # SES のサンドボックスでは宛先のアドレスにも権限が要るので、対象は全アドレスにして、送信元を条件で絞る
+              - Effect: Allow
+                Action: ses:SendEmail
+                Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+                Condition:
+                  StringEquals:
+                    ses:FromAddress: !Ref NotifyAddress
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${AckSecretParam}"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt NotifierLogGroup.Arn
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  AckRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-ack"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: ack
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:UpdateItem
+                Resource: !GetAtt NotifyTable.Arn
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${AckSecretParam}"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt AckLogGroup.Arn
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  AckFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: AckLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-ack"
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: ack.handler
+      MemorySize: 256
+      Timeout: 10
+      Role: !GetAtt AckRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      Environment:
+        Variables:
+          TABLE: !Ref NotifyTable
+          ACK_SECRET_PARAM: !Ref AckSecretParam
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  # メールのリンクから開くので公開の URL にする。署名と有効期限を ack.py で確かめる
+  AckUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt AckFunction.Arn
+      AuthType: NONE
+
+  AckUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AckFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  AckInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AckFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  NotifierFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: NotifierLogGroup
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-notifier"
+      Runtime: python3.13
+      Architectures: [arm64]
+      Handler: notifier.handler
+      MemorySize: 512
+      Timeout: 60
+      Role: !GetAtt NotifierRole.Arn
+      Code:
+        S3Bucket: !Ref CodeBucket
+        S3Key: !Ref CodeKey
+      Environment:
+        Variables:
+          BUCKET: !Ref RawBucket
+          TABLE: !Ref NotifyTable
+          SENDER: !Ref NotifyAddress
+          RECIPIENTS: !Ref Recipients
+          ACK_URL: !GetAtt AckUrl.FunctionUrl
+          ACK_SECRET_PARAM: !Ref AckSecretParam
+          DAILY_LIMIT: "50"
+          ESCALATE_MINUTES: !Ref EscalateMinutes
+      Tags:
+        - { Key: Project, Value: xcp-factoryont }
+        - { Key: Owner, Value: !Ref Owner }
+
+  GraphUpdatedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-graph-updated"
+      EventPattern:
+        source: [aws.s3]
+        detail-type: [Object Created]
+        detail:
+          bucket:
+            name: [!Ref RawBucket]
+          object:
+            key: [kg/current.nq.gz, { prefix: kg/rejected/ }]
+      Targets:
+        - { Id: notifier, Arn: !GetAtt NotifierFunction.Arn }
+
+  EscalateRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-escalate"
+      ScheduleExpression: rate(1 minute)
+      Targets:
+        - { Id: notifier, Arn: !GetAtt NotifierFunction.Arn, Input: '{"kind":"escalate"}' }
+
+  DailyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-daily"
+      ScheduleExpression: cron(30 22 * * ? *)
+      State: !Ref ScheduleState
+      Targets:
+        - { Id: notifier, Arn: !GetAtt NotifierFunction.Arn, Input: '{"kind":"daily"}' }
+
+  WeeklyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-weekly"
+      ScheduleExpression: cron(0 23 ? * SUN *)
+      State: !Ref ScheduleState
+      Targets:
+        - { Id: notifier, Arn: !GetAtt NotifierFunction.Arn, Input: '{"kind":"weekly"}' }
+
+  ShiftRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-shift"
+      ScheduleExpression: cron(45 6,14,22 * * ? *)
+      State: !Ref ScheduleState
+      Targets:
+        - { Id: notifier, Arn: !GetAtt NotifierFunction.Arn, Input: '{"kind":"shift"}' }
+
+  UpdateFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-update-dlq"
+      AlarmDescription: グラフの更新が繰り返し失敗して DLQ に入った
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - { Name: QueueName, Value: !GetAtt UpdateDeadLetterQueue.QueueName }
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  UpdaterErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-updater-errors"
+      AlarmDescription: グラフ更新の Lambda が失敗している
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - { Name: FunctionName, Value: !Ref UpdaterFunction }
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  AlarmRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-alarm"
+      EventPattern:
+        source: [aws.cloudwatch]
+        detail-type: [CloudWatch Alarm State Change]
+        detail:
+          alarmName: [!Sub "${AWS::StackName}-update-dlq", !Sub "${AWS::StackName}-updater-errors"]
+          state:
+            value: [ALARM]
+      Targets:
+        - { Id: notifier, Arn: !GetAtt NotifierFunction.Arn }
+
+  GraphUpdatedPermission:
+    Type: AWS::Lambda::Permission
+    Properties: { FunctionName: !Ref NotifierFunction, Action: lambda:InvokeFunction, Principal: events.amazonaws.com, SourceArn: !GetAtt GraphUpdatedRule.Arn }
+  EscalatePermission:
+    Type: AWS::Lambda::Permission
+    Properties: { FunctionName: !Ref NotifierFunction, Action: lambda:InvokeFunction, Principal: events.amazonaws.com, SourceArn: !GetAtt EscalateRule.Arn }
+  DailyPermission:
+    Type: AWS::Lambda::Permission
+    Properties: { FunctionName: !Ref NotifierFunction, Action: lambda:InvokeFunction, Principal: events.amazonaws.com, SourceArn: !GetAtt DailyRule.Arn }
+  WeeklyPermission:
+    Type: AWS::Lambda::Permission
+    Properties: { FunctionName: !Ref NotifierFunction, Action: lambda:InvokeFunction, Principal: events.amazonaws.com, SourceArn: !GetAtt WeeklyRule.Arn }
+  ShiftPermission:
+    Type: AWS::Lambda::Permission
+    Properties: { FunctionName: !Ref NotifierFunction, Action: lambda:InvokeFunction, Principal: events.amazonaws.com, SourceArn: !GetAtt ShiftRule.Arn }
+  AlarmPermission:
+    Type: AWS::Lambda::Permission
+    Properties: { FunctionName: !Ref NotifierFunction, Action: lambda:InvokeFunction, Principal: events.amazonaws.com, SourceArn: !GetAtt AlarmRule.Arn }
+
+Outputs:
+  RawBucketName:
+    Value: !Ref RawBucket
+  TrustAnchorArn:
+    Value: !GetAtt TrustAnchor.TrustAnchorArn
+  ProfileArn:
+    Value: !GetAtt Profile.ProfileArn
+  ExtractorRoleArn:
+    Value: !GetAtt ExtractorRole.Arn
+  UpdateDeadLetterQueueUrl:
+    Value: !Ref UpdateDeadLetterQueue

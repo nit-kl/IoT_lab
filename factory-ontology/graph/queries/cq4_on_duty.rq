@@ -1,0 +1,14 @@
+# 問い4: この設備の異常時に、当番だった保全担当は誰か
+SELECT ?employeeId ?area ?role ?shiftStart ?shiftEnd WHERE {
+  ?equipment xf:equipmentId "{{EQUIPMENT}}" .
+  ?a a s4inma:Area ;
+      saref:consistsOf+ ?equipment ;
+      rdfs:label ?area .
+  ?shift a xf:DutyShift ;
+      xf:inArea ?a ;
+      org:role / rdfs:label ?role ;
+      prov:wasAssociatedWith / xf:employeeId ?employeeId ;
+      prov:startedAtTime ?shiftStart ;
+      prov:endedAtTime ?shiftEnd .
+  FILTER (?shiftStart <= "{{AT}}"^^xsd:dateTime && "{{AT}}"^^xsd:dateTime < ?shiftEnd)
+}

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工場ナレッジグラフ</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>工場ナレッジグラフ</h1>
+    <input id="search" type="search" placeholder="設備・ロット・指図を検索(PRESS3、E-0103、LC-2610 など)" autocomplete="off">
+    <div id="search-results" class="search-results" hidden></div>
+    <span id="graph-status" class="graph-status"></span>
+    <button id="reset" type="button">全体に戻す</button>
+  </header>
+  <main class="layout">
+    <section class="side">
+      <h2>グラフの中身</h2>
+      <div id="summary" class="summary"></div>
+      <h2>問い合わせ</h2>
+      <select id="query-select" aria-label="問い"></select>
+      <div id="query-params" class="params"></div>
+      <button id="query-run" type="button">実行</button>
+      <div id="query-info" class="hint"></div>
+    </section>
+    <section class="center">
+      <div id="graph" aria-label="ナレッジグラフ"></div>
+      <div id="legend" class="legend"></div>
+      <p class="hint graph-hint">ノードをクリックすると、つながる先を広げます</p>
+      <div id="result" class="result" hidden></div>
+    </section>
+    <section class="side detail" id="detail">
+      <p class="hint">グラフのノードを選んでください。</p>
+    </section>
+  </main>
+  <div id="error" class="error" hidden></div>
+</body>
+</html>

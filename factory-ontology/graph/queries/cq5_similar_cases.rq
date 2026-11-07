@@ -1,0 +1,14 @@
+# 問い5: 同じ型式の設備で、過去に同じ事象と対処はあったか
+SELECT ?equipmentId ?equipment ?model ?started ?memo WHERE {
+  ?target xf:equipmentId "{{EQUIPMENT}}" ;
+      s4inma:belongsToCategory ?m .
+  ?e s4inma:belongsToCategory ?m ;
+      xf:equipmentId ?equipmentId ;
+      rdfs:label ?equipment .
+  ?m rdfs:label ?model .
+  ?work a xf:MaintenanceWork ;
+      xf:onEquipment ?e ;
+      prov:startedAtTime ?started ;
+      xf:memo ?memo .
+}
+ORDER BY ?started

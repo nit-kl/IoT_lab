@@ -1,0 +1,208 @@
+# 台本モックの文面。{名前} に事実を入れる。分析と提案の文は固定で、次の段階で本物の LLM に置き換える。
+# 役割ごとに情報量を変える: 工場長は短く、保全当番は詳しく、生産管理は納期だけ。
+
+[critical_alarm."保全当番"]
+tag = "緊急"
+subject = "{line} {equipment} 停止"
+body = """
+{equipment}({equipmentId})で重大アラームが発生しました。
+
+■ 発生
+時刻: {started}
+内容: {message}
+ライン: {line}
+当番: {duty}
+
+■ 疑わしい部品(現在取付中)
+{parts}
+
+■ 同じ型式の過去事例
+{cases}
+
+■ 分析(台本)
+振動の上昇に続く主軸の異常停止で、過去事例と同じ軸受の損傷が疑われます。
+主軸軸受の点検を優先し、交換品のロットを確認してください。
+"""
+
+[critical_alarm."ライン責任者"]
+tag = "緊急"
+subject = "{line} {equipment} 停止"
+body = """
+担当ラインの設備が停止しました。
+
+設備: {equipment}
+時刻: {started}
+内容: {message}
+保全当番: {duty}
+
+実行中の指図:
+{orders}
+
+■ 見込み(台本)
+過去事例では復旧まで約 3 時間でした。代替の段取りを検討してください。
+"""
+
+[critical_alarm."工場長"]
+tag = "緊急"
+subject = "{line} {equipment} 停止"
+body = """
+{line}の{equipment}が停止し、保全当番が対応中です。
+納期が近い指図は {due_count} 件です。
+{lot_note}
+"""
+
+[critical_alarm."品質保証"]
+tag = "確認"
+subject = "{equipment} の部品と同じロットの設備があります"
+body = """
+停止した{equipment}と同じロットの部品を使う、または使っていた設備があります。
+
+{shared}
+
+■ 提案(台本)
+対象設備の振動の推移と、直近の検査結果を確認してください。
+"""
+
+[critical_alarm."生産管理"]
+tag = "納期"
+subject = "{line} 停止による納期への影響"
+body = """
+{line}の停止により、次の指図に遅れが出る可能性があります。
+
+{orders}
+"""
+
+[lot_quality."品質保証"]
+tag = "品質"
+subject = "ロット {lot} で不良が集中しています"
+body = """
+複数の指図で不良率が高くなっています。
+
+ロット: {lot}({part})
+仕入先: {supplier}
+不良率: {rate}({bad} / {total})
+対象: {orders} 指図、{lines} ライン
+
+■ 影響範囲
+{impact}
+
+■ 提案(台本)
+同じロットの使用を止め、仕入先へ成績書の確認を依頼してください。
+"""
+
+[lot_quality."生産管理"]
+tag = "品質"
+subject = "ロット {lot} の影響で再生産の可能性"
+body = """
+ロット {lot} を使った {orders} 指図で不良が増えています。
+対象の製品: {products}
+代替ロットの手配を確認してください。
+"""
+
+[lot_quality."ライン責任者"]
+tag = "品質"
+subject = "{target} ロット {lot} の使用を確認してください"
+body = """
+{target}で使用中のロット {lot} に不良が集中しています。
+不良率: {rate}
+使用の継続は品質保証の判断を待ってください。
+"""
+
+[lot_quality."工場長"]
+tag = "品質"
+subject = "ロット {lot} の不良が {lines} ラインに影響"
+body = """
+仕入先 {supplier} のロット {lot} で、{lines} ラインに不良が出ています(不良率 {rate})。
+品質保証が影響範囲を確認中です。
+"""
+
+[escalation."ライン責任者"]
+tag = "未対応"
+subject = "{equipment} の停止に {minutes} 分間対応がありません"
+body = """
+{equipment}の停止について、保全当番の対応が記録されていません。
+経過: {minutes} 分
+保全当番の状況を確認してください。
+"""
+
+[escalation."工場長"]
+tag = "未対応"
+subject = "{equipment} の停止に {minutes} 分間対応がありません"
+body = """
+{equipment}の停止について、{minutes} 分たっても対応が記録されていません。
+ライン責任者にも連絡済みです。
+"""
+
+[daily."工場長"]
+tag = "日次"
+subject = "{date} 工場サマリー"
+body = """
+重大アラーム {critical} 件、停止 {stop_minutes} 分でした。
+歩留りは {yield_all}(前日 {yield_prev})です。
+{decision}
+"""
+
+[daily."KPI責任者"]
+tag = "日次"
+subject = "{date} KPI レポート"
+body = """
+■ 歩留り(目標との差)
+{yield_table}
+
+■ 停止
+{stop_table}
+
+■ 通知の実績
+全員に一斉送信した場合 {broadcast} 通 → 実際 {sent} 通(削減 {reduction})
+"""
+
+[daily."品質保証"]
+tag = "日次"
+subject = "{date} 品質サマリー"
+body = """
+■ ラインごとの不良
+{yield_table}
+
+■ データの問題
+{issues}
+"""
+
+[weekly."工場長"]
+tag = "週次"
+subject = "{date} 週の改善提案"
+body = """
+先週の停止は合計 {stop_minutes} 分でした。
+
+■ 改善提案(台本)
+1. プレスの主軸軸受を、同じロットの設備から計画的に交換する
+2. 夜勤の段取り替えの手順を日勤に合わせる
+3. プレスライン2の休止中の電力を調査する
+"""
+
+[weekly."KPI責任者"]
+tag = "週次"
+subject = "{date} 週次 KPI"
+body = """
+■ 歩留り(目標との差)
+{yield_table}
+
+■ 停止
+{stop_table}
+
+■ 改善の効果の見込み(台本)
+段取り時間を夜勤で 30 分短縮すると、週に約 2 時間の稼働を確保できます。
+"""
+
+[shift."ライン責任者"]
+tag = "シフト"
+subject = "{target} 前シフトの引き継ぎ"
+body = """
+良品 {ok} / 不良 {ng}(歩留り {yield_line}、目標 {target_yield})
+"""
+
+[admin."管理者"]
+tag = "管理"
+subject = "{title}"
+body = """
+{detail}
+"""

@@ -1,0 +1,15 @@
+# 問い2: 同じ仕入先ロットの部品を使う設備はどれか
+SELECT ?equipmentId ?equipment ?line ?installed ?removed WHERE {
+  ?batch xf:lotNumber "{{LOT}}" .
+  ?installation a xf:PartInstallation ;
+      xf:usesBatch ?batch ;
+      xf:onEquipment ?e ;
+      prov:startedAtTime ?installed .
+  OPTIONAL { ?installation prov:endedAtTime ?removed }
+  ?e xf:equipmentId ?equipmentId ;
+      rdfs:label ?equipment .
+  ?l a s4inma:WorkCenter ;
+      saref:consistsOf+ ?e ;
+      rdfs:label ?line .
+}
+ORDER BY ?equipmentId

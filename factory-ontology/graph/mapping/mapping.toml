@@ -1,0 +1,317 @@
+# Oracle の表 → ナレッジグラフの変換定義。列の意味はここだけに書く。
+#
+# 表の設定
+#   name     表名
+#   subject  その行が表すノードの IRI(id/ からの相対。{列名} で値を埋める)
+#   types    ノードの型
+#   row      名前付きグラフを分ける単位(省略時は主キーに相当する subject)。1 行ごとに分けるので、
+#            行が更新・論理削除されたら、そのグラフを差し替えるだけでよい
+#   label    ラベルの書式
+#   skip     列の値を使わない理由 { 列名 = "理由" }
+#   not_in_graph  表ごとグラフに入れない理由
+#
+# prop の書き方(1 行につき 1 つ)
+#   column + predicate + kind  列の値をそのまま持つ。kind は string / ja / int / decimal / date / datetime
+#   ref + predicate            別のノードへの関係(値が空の列を含むと作らない)
+#   inverse = true             向きが逆(相手 → 自分)
+#   code + column + predicate  コード表の値への関係。未定義のコードは関係を作らず、問題として記録する
+#   alias + column + as        外部システムの ID を設備コードに読み替え、{as} として ref で使う
+#   required = true            参照先がなければ行を隔離する
+#   when_null = "warn"         値が空なら問題として記録する
+#   predicate_by               列の値で述語を切り替える { column, map }
+#   ref_by                     列の値で参照先の書式を切り替える { column, map }
+#   iri                        固定のノードへの関係
+
+[[table]]
+name = "M_KOJO"
+subject = "factory/{KOJO_CD}"
+types = ["s4inma:Factory"]
+label = "{KOJO_NM}"
+
+[[table]]
+name = "M_AREA"
+subject = "area/{AREA_CD}"
+types = ["s4inma:Area"]
+label = "{AREA_NM}"
+props = [{ ref = "factory/{KOJO_CD}", predicate = "saref:consistsOf", inverse = true }]
+
+[[table]]
+name = "M_LINE"
+subject = "line/{LINE_CD}"
+types = ["s4inma:WorkCenter"]
+label = "{LINE_NM}"
+props = [{ ref = "area/{AREA_CD}", predicate = "saref:consistsOf", inverse = true }]
+
+[[table]]
+name = "M_KATASHIKI"
+subject = "model/{KATA_CD}"
+types = ["s4inma:ProductionEquipmentCategory", "skos:Concept"]
+label = "{KATA_NM}"
+props = [
+  { column = "KATA_CD", predicate = "skos:notation", kind = "string" },
+  { column = "MAKER_NM", predicate = "xf:maker", kind = "string" },
+  { column = "KIKI_KBN", predicate = "xf:equipmentKind", kind = "string" },
+]
+
+[[table]]
+name = "M_KIKAI"
+subject = "equipment/{KIKAI_CD}"
+types = ["s4inma:ProductionEquipment"]
+label = "{KIKAI_NM}"
+props = [
+  { column = "KIKAI_CD", predicate = "xf:equipmentId", kind = "string" },
+  { column = "SECCHI_DT", predicate = "xf:installedOn", kind = "date" },
+  { ref = "model/{KATA_CD}", predicate = "s4inma:belongsToCategory" },
+  { ref = "line/{LINE_CD}", predicate = "saref:consistsOf", inverse = true, unless = "OYA_KIKAI_CD" },
+  { ref = "equipment/{OYA_KIKAI_CD}", predicate = "saref:consistsOf", inverse = true },
+]
+
+[[table]]
+name = "M_KIKAI_ALIAS"
+subject = "equipment/{KIKAI_CD}"
+row = "{SYS_KBN}/{GAIBU_CD}"
+props = [
+  { column = "GAIBU_CD", kind = "string", predicate_by = { column = "SYS_KBN", map = { PLC = "xf:plcId", CMMS = "xf:cmmsId" } } },
+]
+
+[[table]]
+name = "M_BUHIN"
+subject = "part/{BUHIN_CD}"
+types = ["xf:Part"]
+label = "{BUHIN_NM}"
+props = [
+  { column = "BUHIN_CD", predicate = "xf:partId", kind = "string" },
+  { column = "BUHIN_KBN", predicate = "xf:partKind", kind = "string" },
+  { column = "TANI", predicate = "xf:unitName", kind = "string" },
+]
+
+[[table]]
+name = "M_BUHIN_KOSEI"
+subject = "bom/{OYA_BUHIN_CD}/{KO_BUHIN_CD}"
+types = ["xf:BomLine"]
+label = "構成 {OYA_BUHIN_CD} {KO_BUHIN_CD}"
+props = [
+  { ref = "part/{OYA_BUHIN_CD}", predicate = "xf:parentPart" },
+  { ref = "part/{KO_BUHIN_CD}", predicate = "xf:childPart" },
+  { column = "SURYO", predicate = "xf:quantity", kind = "decimal" },
+]
+
+[[table]]
+name = "M_SHIIRESAKI"
+subject = "supplier/{SHIIRE_CD}"
+types = ["xf:Supplier"]
+label = "{SHIIRE_NM}"
+
+[[table]]
+name = "M_HINMOKU"
+subject = "product/{HIN_CD}"
+types = ["s4inma:ItemCategory"]
+label = "{HIN_NM}"
+props = [
+  { column = "HIN_CD", predicate = "skos:notation", kind = "string" },
+  { column = "HYOJUN_CT_SEC", predicate = "xf:standardCycleSeconds", kind = "decimal" },
+]
+
+[[table]]
+name = "M_SHAIN"
+subject = "person/{SHAIN_NO}"
+types = ["prov:Person"]
+label = "社員 {SHAIN_NO}"
+skip = { SHAIN_NM = "個人名はクラウドへ持ち出さない" }
+props = [
+  { column = "SHAIN_NO", predicate = "xf:employeeId", kind = "string" },
+  { column = "SHOZOKU_NM", predicate = "xf:department", kind = "string" },
+]
+
+[[table]]
+name = "M_YAKUWARI"
+subject = "role/{YAKU_CD}"
+types = ["org:Role"]
+label = "{YAKU_NM}"
+props = [{ column = "YAKU_CD", predicate = "skos:notation", kind = "string" }]
+
+[[table]]
+name = "M_TANTO_HANI"
+subject = "assignment/{TANTO_ID}"
+types = ["xf:RoleAssignment"]
+label = "担当 {TANTO_ID}"
+props = [
+  { ref = "person/{SHAIN_NO}", predicate = "org:member" },
+  { ref = "role/{YAKU_CD}", predicate = "org:role" },
+  { predicate = "xf:scope", ref_by = { column = "HANI_KBN", map = { KOJO = "factory/{HANI_CD}", AREA = "area/{HANI_CD}", LINE = "line/{HANI_CD}" } } },
+  { column = "KAISHI_DT", predicate = "xf:validFrom", kind = "date" },
+  { column = "SHURYO_DT", predicate = "xf:validUntil", kind = "date" },
+]
+
+[[table]]
+name = "M_CODE"
+subject = "code/{CD_KBN}/{CD}"
+types = ["skos:Concept"]
+label = "{CD_NM}"
+props = [
+  { column = "CD", predicate = "skos:notation", kind = "string" },
+  { ref = "code/{CD_KBN}", predicate = "skos:inScheme" },
+]
+
+[[table]]
+name = "M_KPI_MOKUHYO"
+subject = "kpi-target/{LINE_CD}/{KPI_CD}"
+types = ["xf:KpiTarget"]
+label = "目標 {LINE_CD} {KPI_CD}"
+props = [
+  { ref = "line/{LINE_CD}", predicate = "xf:onLine" },
+  { code = "KPI", column = "KPI_CD", predicate = "xf:kpi" },
+  { column = "MOKUHYO_VAL", predicate = "xf:targetValue", kind = "decimal" },
+]
+
+[[table]]
+name = "T_TOBAN"
+subject = "duty/{TOBAN_ID}"
+types = ["xf:DutyShift"]
+label = "当番 {TOBAN_ID}"
+props = [
+  { ref = "person/{SHAIN_NO}", predicate = "prov:wasAssociatedWith" },
+  { ref = "area/{AREA_CD}", predicate = "xf:inArea" },
+  { iri = "role/R-MNT", predicate = "org:role" },
+  { column = "KAISHI_TS", predicate = "prov:startedAtTime", kind = "datetime" },
+  { column = "SHURYO_TS", predicate = "prov:endedAtTime", kind = "datetime" },
+]
+
+[[table]]
+name = "T_LOT"
+subject = "lot/{LOT_NO}"
+types = ["s4inma:MaterialBatch"]
+label = "ロット {LOT_NO}"
+props = [
+  { column = "LOT_NO", predicate = "xf:lotNumber", kind = "string" },
+  { ref = "part/{BUHIN_CD}", predicate = "xf:ofPart" },
+  { ref = "supplier/{SHIIRE_CD}", predicate = "xf:suppliedBy" },
+  { column = "UKEIRE_DT", predicate = "xf:receivedOn", kind = "date" },
+  { column = "SURYO", predicate = "xf:quantity", kind = "decimal" },
+]
+
+[[table]]
+name = "T_BUHIN_TORITSUKE"
+subject = "installation/{TORI_ID}"
+types = ["xf:PartInstallation"]
+label = "取付 {TORI_ID}"
+props = [
+  { ref = "equipment/{KIKAI_CD}", predicate = "xf:onEquipment" },
+  { ref = "part/{BUHIN_CD}", predicate = "xf:ofPart" },
+  { ref = "lot/{LOT_NO}", predicate = "xf:usesBatch" },
+  { column = "TORITSUKE_TS", predicate = "prov:startedAtTime", kind = "datetime" },
+  { column = "TORIHAZUSHI_TS", predicate = "prov:endedAtTime", kind = "datetime" },
+]
+
+[[table]]
+name = "T_SEIZO_SHIJI"
+subject = "order/{SHIJI_NO}"
+types = ["xf:WorkOrder"]
+label = "指図 {SHIJI_NO}"
+props = [
+  { column = "SHIJI_NO", predicate = "xf:orderNumber", kind = "string" },
+  { ref = "product/{HIN_CD}", predicate = "xf:producesProduct" },
+  { ref = "line/{LINE_CD}", predicate = "xf:onLine" },
+  { column = "SHIJI_SURYO", predicate = "xf:plannedQuantity", kind = "int" },
+  { column = "KAISHI_YOTEI_TS", predicate = "xf:plannedStart", kind = "datetime" },
+  { column = "NOKI_DT", predicate = "xf:dueDate", kind = "date" },
+  { code = "JOTAI", column = "JOTAI_KBN", predicate = "xf:orderState" },
+]
+
+[[table]]
+name = "T_SHIJI_LOT"
+subject = "material-use/{SHIJI_NO}/{LOT_NO}"
+types = ["xf:MaterialUse"]
+label = "使用 {SHIJI_NO} {LOT_NO}"
+props = [
+  { ref = "order/{SHIJI_NO}", predicate = "xf:forOrder" },
+  { ref = "lot/{LOT_NO}", predicate = "xf:usesBatch" },
+  { column = "SHIYO_SURYO", predicate = "xf:quantity", kind = "decimal" },
+]
+
+[[table]]
+name = "T_SEISAN_JISSEKI"
+subject = "run/{JISSEKI_ID}"
+types = ["xf:ProductionRun"]
+label = "生産実績 {JISSEKI_ID}"
+props = [
+  { ref = "order/{SHIJI_NO}", predicate = "xf:forOrder" },
+  { ref = "equipment/{KIKAI_CD}", predicate = "xf:onEquipment" },
+  { column = "KAISHI_TS", predicate = "prov:startedAtTime", kind = "datetime" },
+  { column = "SHURYO_TS", predicate = "prov:endedAtTime", kind = "datetime" },
+  { column = "OK_SU", predicate = "xf:goodCount", kind = "int" },
+  { column = "NG_SU", predicate = "xf:defectCount", kind = "int" },
+]
+
+[[table]]
+name = "T_HINSHITSU_KENSA"
+subject = "inspection/{KENSA_ID}"
+types = ["xf:Inspection"]
+label = "検査 {KENSA_ID}"
+props = [
+  { ref = "order/{SHIJI_NO}", predicate = "xf:forOrder" },
+  { column = "KENSA_TS", predicate = "prov:startedAtTime", kind = "datetime" },
+  { column = "KENSA_SU", predicate = "xf:inspectedCount", kind = "int" },
+  { column = "NG_SU", predicate = "xf:defectCount", kind = "int", when_null = "warn" },
+  { code = "FURYO", column = "FURYO_CD", predicate = "xf:defectType" },
+]
+
+[[table]]
+name = "T_EQP_ALM"
+subject = "alarm/{ALM_ID}"
+types = ["xf:Alarm"]
+label = "アラーム {ALM_ID} {ALM_CD}"
+props = [
+  { alias = "PLC", column = "SRC_EQP_ID", as = "KIKAI_CD", required = true, ref = "equipment/{KIKAI_CD}", predicate = "xf:onEquipment" },
+  { column = "SRC_EQP_ID", predicate = "xf:sourceEquipmentId", kind = "string" },
+  { code = "ALM", column = "ALM_CD", predicate = "xf:alarmCode" },
+  { column = "ALM_CD", predicate = "xf:rawCode", kind = "string" },
+  { column = "ALM_LV", predicate = "xf:severity", kind = "int" },
+  { column = "HASSEI_TS", predicate = "prov:startedAtTime", kind = "datetime" },
+  { column = "FUKKI_TS", predicate = "prov:endedAtTime", kind = "datetime" },
+  { column = "MSG", predicate = "xf:message", kind = "string" },
+]
+
+[[table]]
+name = "T_TEISHI_KIROKU"
+subject = "stoppage/{TEISHI_ID}"
+types = ["xf:Stoppage"]
+label = "停止 {TEISHI_ID}"
+props = [
+  { ref = "equipment/{KIKAI_CD}", predicate = "xf:onEquipment" },
+  { code = "TEISHI", column = "RIYU_CD", predicate = "xf:stopReason" },
+  { column = "KAISHI_TS", predicate = "prov:startedAtTime", kind = "datetime" },
+  { column = "SHURYO_TS", predicate = "prov:endedAtTime", kind = "datetime" },
+]
+
+[[table]]
+name = "T_HOZEN"
+subject = "maintenance/{HOZEN_ID}"
+types = ["xf:MaintenanceWork"]
+label = "保全 {HOZEN_ID}"
+props = [
+  { alias = "CMMS", column = "GAIBU_KIKAI_CD", as = "KIKAI_CD", required = true, ref = "equipment/{KIKAI_CD}", predicate = "xf:onEquipment" },
+  { column = "GAIBU_KIKAI_CD", predicate = "xf:sourceEquipmentId", kind = "string" },
+  { ref = "alarm/{ALM_ID}", predicate = "xf:forAlarm" },
+  { ref = "person/{SHAIN_NO}", predicate = "prov:wasAssociatedWith" },
+  { column = "CHAKUSHU_TS", predicate = "prov:startedAtTime", kind = "datetime" },
+  { column = "KANRYO_TS", predicate = "prov:endedAtTime", kind = "datetime" },
+  { column = "SHOCHI_MEMO", predicate = "xf:memo", kind = "string" },
+]
+
+[[table]]
+name = "T_DENRYOKU"
+not_in_graph = "時系列なのでグラフに入れず S3 に残す"
+
+# センサーの値は入れず、どの設備のどの計測項目があるかだけをグラフにする
+[[table]]
+name = "T_SENSOR_DATA"
+subject = "observable/{KIKAI_CD}/{METRIC_CD}"
+row = "{SRC_EQP_ID}/{METRIC_CD}"
+types = ["sosa:ObservableProperty"]
+label = "{KIKAI_CD} {METRIC_CD}"
+skip = { KEISOKU_TS = "時系列の値は S3 に残す", VAL = "時系列の値は S3 に残す" }
+props = [
+  { alias = "PLC", column = "SRC_EQP_ID", as = "KIKAI_CD", required = true, ref = "equipment/{KIKAI_CD}", predicate = "ssn:isPropertyOf" },
+  { column = "METRIC_CD", predicate = "skos:notation", kind = "string" },
+]

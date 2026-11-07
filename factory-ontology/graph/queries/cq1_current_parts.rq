@@ -1,0 +1,13 @@
+# 問い1: この設備に今取り付いている部品の仕入先はどこか
+SELECT ?part ?lot ?supplier ?installed WHERE {
+  ?equipment xf:equipmentId "{{EQUIPMENT}}" .
+  ?installation a xf:PartInstallation ;
+      xf:onEquipment ?equipment ;
+      xf:ofPart / rdfs:label ?part ;
+      xf:usesBatch ?batch ;
+      prov:startedAtTime ?installed .
+  FILTER NOT EXISTS { ?installation prov:endedAtTime ?removed }
+  ?batch xf:lotNumber ?lot ;
+      xf:suppliedBy / rdfs:label ?supplier .
+}
+ORDER BY ?part

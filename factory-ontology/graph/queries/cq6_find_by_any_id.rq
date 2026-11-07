@@ -1,0 +1,8 @@
+# 問い6: 別システムの ID で検索しても同じ設備にたどり着くか
+SELECT DISTINCT ?equipmentId ?equipment ?plcId ?cmmsId WHERE {
+  { ?e xf:equipmentId "{{ID}}" } UNION { ?e xf:plcId "{{ID}}" } UNION { ?e xf:cmmsId "{{ID}}" }
+  ?e xf:equipmentId ?equipmentId ;
+      rdfs:label ?equipment ;
+      xf:plcId ?plcId ;
+      xf:cmmsId ?cmmsId .
+}

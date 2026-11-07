@@ -1,0 +1,14 @@
+# 問い7(通知用): この設備のラインの責任者は、指定日に誰か(担当の交代を日付で判定)
+SELECT ?employeeId ?role ?line ?from ?until WHERE {
+  ?equipment xf:equipmentId "{{EQUIPMENT}}" .
+  ?l a s4inma:WorkCenter ;
+      saref:consistsOf+ ?equipment ;
+      rdfs:label ?line .
+  ?assignment a xf:RoleAssignment ;
+      xf:scope ?l ;
+      org:member / xf:employeeId ?employeeId ;
+      org:role / rdfs:label ?role ;
+      xf:validFrom ?from .
+  OPTIONAL { ?assignment xf:validUntil ?until }
+  FILTER (?from <= "{{DATE}}"^^xsd:date && (!BOUND(?until) || "{{DATE}}"^^xsd:date <= ?until))
+}

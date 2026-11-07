@@ -1,0 +1,11 @@
+# 問い8(品質):変換時に見つかったデータの問題の一覧
+SELECT ?type ?table ?column ?value ?quarantined (COUNT(*) AS ?rows) WHERE {
+  ?issue a xf:DataIssue ;
+      xf:issueType ?type ;
+      xf:sourceTable ?table ;
+      xf:sourceColumn ?column ;
+      xf:quarantined ?quarantined .
+  OPTIONAL { ?issue xf:sourceValue ?value }
+}
+GROUP BY ?type ?table ?column ?value ?quarantined
+ORDER BY ?type ?table
